@@ -1,0 +1,6 @@
+[package]
+name = "descent"
+version = "0.1.0"
+authors = ["Paul Scott <paul.m.sco@gmail.com>"]
+
+[dependencies]
