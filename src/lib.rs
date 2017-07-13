@@ -15,28 +15,28 @@ pub trait Evaluate {
 }
 
 #[derive(Debug, Clone)]
-pub enum Node {
-    //Function(Box<Evaluate>, Vec<Node>), // need trait where can pass nodes
-    Add(Vec<Node>),
-    Mul(Vec<Node>),
-    Neg(Box<Node>), // negate
-    Inv(Box<Node>), // invert
-    Pow(Box<Node>, i32),
+pub enum Expr {
+    //Function(Box<Evaluate>, Vec<Expr>), // need trait where can pass nodes
+    Add(Vec<Expr>),
+    Mul(Vec<Expr>),
+    Neg(Box<Expr>), // negate
+    Inv(Box<Expr>), // invert
+    Pow(Box<Expr>, i32),
     Variable(ID),
     Parameter(ID),
     Float(f64),
     Integer(i32),
 }
 
-impl Evaluate for Node {
+impl Evaluate for Expr {
     fn value(&self, ret: &Retrieve) -> f64 {
-        use Node::*;
+        use Expr::*;
         match *self {
-            Add(ref ns) => ns.iter().fold(0.0, |a, n| { a + n.value(ret) }),
-            Mul(ref ns) => ns.iter().fold(1.0, |a, n| { a*n.value(ret) }),
-            Neg(ref n) => -n.value(ret),
-            Inv(ref n) => 1.0/n.value(ret),
-            Pow(ref n, e) => n.value(ret).powi(e),
+            Add(ref es) => es.iter().fold(0.0, |a, e| { a + e.value(ret) }),
+            Mul(ref es) => es.iter().fold(1.0, |a, e| { a*e.value(ret) }),
+            Neg(ref e) => -e.value(ret),
+            Inv(ref e) => 1.0/e.value(ret),
+            Pow(ref e, p) => e.value(ret).powi(p),
             Variable(ref id) => ret.get_var(id),
             Parameter(ref id) => ret.get_par(id),
             Float(v) => v,
@@ -45,29 +45,29 @@ impl Evaluate for Node {
     }
 
     fn deriv(&self, ret: &Retrieve, vid: &ID) -> (f64, f64) {
-        use Node::*;
+        use Expr::*;
         match *self {
-            Add(ref ns) =>
-                ns.iter().fold((0.0, 0.0), |a, n| {
+            Add(ref es) =>
+                es.iter().fold((0.0, 0.0), |a, n| {
                     let r = n.deriv(ret, vid);
                     (a.0 + r.0, a.1 + r.1)
                 }),
-            Mul(ref ns) =>
-                ns.iter().fold((1.0, 0.0), |a, n| {
+            Mul(ref es) =>
+                es.iter().fold((1.0, 0.0), |a, n| {
                     let r = n.deriv(ret, vid);
                     (a.0*r.0, a.0*r.1 + r.0*a.1)
                 }),
-            Neg(ref n) => {
-                let r = n.deriv(ret, vid);
+            Neg(ref e) => {
+                let r = e.deriv(ret, vid);
                 (-r.0, -r.1)
             },
-            Inv(ref n) => {
-                let r = n.deriv(ret, vid);
+            Inv(ref e) => {
+                let r = e.deriv(ret, vid);
                 (1.0/r.0, -r.1/(r.0*r.0))
             },
-            Pow(ref n, e) => {
-                let r = n.deriv(ret, vid);
-                (r.0.powi(e), r.1*(e as f64)*r.0.powi(e - 1))
+            Pow(ref e, p) => {
+                let r = e.deriv(ret, vid);
+                (r.0.powi(p), r.1*(p as f64)*r.0.powi(p - 1))
             },
             Variable(ref id) =>
                 (ret.get_var(id), if id == vid { 1.0 } else { 0.0 }),
@@ -78,33 +78,150 @@ impl Evaluate for Node {
     }
 }
 
-// With self
-impl std::ops::Add<Node> for Node {
-    type Output = Node;
+macro_rules! binary_ops {
+    ( $T:ident, $f:ident, &$U:ty, &$V:ty, $O:ty ) => {
+        impl<'a, 'b> std::ops::$T<&'b $V> for &'a $U {
+            type Output = $O;
 
-    fn add(self, other: Node) -> Node {
+            fn $f(self, other: &'b $V) -> $O {
+                self.clone().$f(other.clone())
+            }
+        }
+    };
+    ( $T:ident, $f:ident, &$U:ty, $V:ty, $O:ty ) => {
+        impl<'a> std::ops::$T<$V> for &'a $U {
+            type Output = $O;
+
+            fn $f(self, other: $V) -> $O {
+                self.clone().$f(other)
+            }
+        }
+    };
+    ( $T:ident, $f:ident, $U:ty, &$V:ty, $O:ty ) => {
+        impl<'b> std::ops::$T<&'b $V> for $U {
+            type Output = $O;
+
+            fn $f(self, other: &'b $V) -> $O {
+                self.$f(other.clone())
+            }
+        }
+    };
+    ( $T:ident, $f:ident, $U:ty, $V:ty, $O:ty ) => {
+        impl std::ops::$T<$V> for $U {
+            type Output = $O;
+
+            fn $f(self, other: $V) -> $O {
+                self.$f(other)
+            }
+        }
+    };
+}
+
+macro_rules! binary_ops_self_cast {
+    ( $T:ident, $f:ident, &$U:ty, &$V:ty, $O:ty, $C:expr ) => {
+        impl<'a, 'b> std::ops::$T<&'b $V> for &'a $U {
+            type Output = $O;
+
+            fn $f(self, other: &'b $V) -> $O {
+                $C(self.clone()).$f(other.clone())
+            }
+        }
+    };
+    ( $T:ident, $f:ident, &$U:ty, $V:ty, $O:ty, $C:expr ) => {
+        impl<'a> std::ops::$T<$V> for &'a $U {
+            type Output = $O;
+
+            fn $f(self, other: $V) -> $O {
+                $C(self.clone()).$f(other)
+            }
+        }
+    };
+    ( $T:ident, $f:ident, $U:ty, &$V:ty, $O:ty, $C:expr ) => {
+        impl<'b> std::ops::$T<&'b $V> for $U {
+            type Output = $O;
+
+            fn $f(self, other: &'b $V) -> $O {
+                $C(self).$f(other.clone())
+            }
+        }
+    };
+    ( $T:ident, $f:ident, $U:ty, $V:ty, $O:ty, $C:expr ) => {
+        impl std::ops::$T<$V> for $U {
+            type Output = $O;
+
+            fn $f(self, other: $V) -> $O {
+                $C(self).$f(other)
+            }
+        }
+    };
+}
+
+macro_rules! binary_ops_other_cast {
+    ( $T:ident, $f:ident, &$U:ty, &$V:ty, $O:ty, $C:expr ) => {
+        impl<'a, 'b> std::ops::$T<&'b $V> for &'a $U {
+            type Output = $O;
+
+            fn $f(self, other: &'b $V) -> $O {
+                self.clone().$f($C(other.clone()))
+            }
+        }
+    };
+    ( $T:ident, $f:ident, &$U:ty, $V:ty, $O:ty, $C:expr ) => {
+        impl<'a> std::ops::$T<$V> for &'a $U {
+            type Output = $O;
+
+            fn $f(self, other: $V) -> $O {
+                self.clone().$f($C(other))
+            }
+        }
+    };
+    ( $T:ident, $f:ident, $U:ty, &$V:ty, $O:ty, $C:expr ) => {
+        impl<'b> std::ops::$T<&'b $V> for $U {
+            type Output = $O;
+
+            fn $f(self, other: &'b $V) -> $O {
+                self.$f($C(other.clone()))
+            }
+        }
+    };
+    ( $T:ident, $f:ident, $U:ty, $V:ty, $O:ty, $C:expr ) => {
+        impl std::ops::$T<$V> for $U {
+            type Output = $O;
+
+            fn $f(self, other: $V) -> $O {
+                self.$f($C(other))
+            }
+        }
+    };
+}
+
+
+impl std::ops::Add<Expr> for Expr {
+    type Output = Expr;
+
+    fn add(self, other: Expr) -> Expr {
         // Can optimise, check if child is Add and combine
         match self {
-            Node::Add(mut ns) => {
+            Expr::Add(mut es) => {
                 match other {
-                    Node::Add(ref ons) => {
-                        ns.extend(ons.into_iter());
-                        Node::Add(ns)
+                    Expr::Add(oes) => {
+                        es.extend(oes);
+                        Expr::Add(es)
                     },
                     _ => {
-                        ns.push(other);
-                        Node::Add(ns)
+                        es.push(other);
+                        Expr::Add(es)
                     },
                 }
             },
             _ => {
                 match other {
-                    Node::Add(mut ons) => {
-                        ons.push(self); // out of order now
-                        Node::Add(ons)
+                    Expr::Add(mut oes) => {
+                        oes.push(self); // out of order now
+                        Expr::Add(oes)
                     },
                     _ => {
-                        Node::Add(vec![self, other])
+                        Expr::Add(vec![self, other])
                     },
                 }
             },
@@ -112,63 +229,66 @@ impl std::ops::Add<Node> for Node {
     }
 }
 
-impl<'a> std::ops::Add<&'a Node> for Node {
-    type Output = Node;
+impl std::ops::Mul<Expr> for Expr {
+    type Output = Expr;
 
-    fn add(self, other: &'a Node) -> Node {
-        self.add(other.clone())
+    fn mul(self, other: Expr) -> Expr {
+        // Can optimise, check if child is Mul and combine
+        match self {
+            Expr::Mul(mut es) => {
+                match other {
+                    Expr::Mul(oes) => {
+                        es.extend(oes);
+                        Expr::Mul(es)
+                    },
+                    _ => {
+                        es.push(other);
+                        Expr::Mul(es)
+                    },
+                }
+            },
+            _ => {
+                match other {
+                    Expr::Mul(mut oes) => {
+                        oes.push(self); // out of order now
+                        Expr::Mul(oes)
+                    },
+                    _ => {
+                        Expr::Mul(vec![self, other])
+                    },
+                }
+            },
+        }
     }
 }
 
-impl<'a> std::ops::Add<Node> for &'a Node {
-    type Output = Node;
+binary_ops!(Add, add, &Expr, &Expr, Expr);
+binary_ops!(Add, add, &Expr, Expr, Expr);
+binary_ops!(Add, add, Expr, &Expr, Expr);
 
-    fn add(self, other: Node) -> Node {
-        self.clone().add(other)
-    }
-}
+binary_ops!(Mul, mul, &Expr, &Expr, Expr);
+binary_ops!(Mul, mul, &Expr, Expr, Expr);
+binary_ops!(Mul, mul, Expr, &Expr, Expr);
 
-impl<'a, 'b> std::ops::Add<&'b Node> for &'a Node {
-    type Output = Node;
+binary_ops_other_cast!(Add, add, Expr, i32, Expr, Expr::Integer);
+binary_ops_other_cast!(Add, add, &Expr, i32, Expr, Expr::Integer);
+binary_ops_self_cast!(Add, add, i32, Expr, Expr, Expr::Integer);
+binary_ops_self_cast!(Add, add, i32, &Expr, Expr, Expr::Integer);
 
-    fn add(self, other: &'b Node) -> Node {
-        self.clone().add(other.clone())
-    }
-}
+binary_ops_other_cast!(Add, add, Expr, f64, Expr, Expr::Float);
+binary_ops_other_cast!(Add, add, &Expr, f64, Expr, Expr::Float);
+binary_ops_self_cast!(Add, add, f64, Expr, Expr, Expr::Float);
+binary_ops_self_cast!(Add, add, f64, &Expr, Expr, Expr::Float);
 
-// With numbers
-impl std::ops::Add<i32> for Node {
-    type Output = Node;
+binary_ops_other_cast!(Mul, mul, Expr, i32, Expr, Expr::Integer);
+binary_ops_other_cast!(Mul, mul, &Expr, i32, Expr, Expr::Integer);
+binary_ops_self_cast!(Mul, mul, i32, Expr, Expr, Expr::Integer);
+binary_ops_self_cast!(Mul, mul, i32, &Expr, Expr, Expr::Integer);
 
-    fn add(self, other: i32) -> Node {
-        // Could check if zero
-        Node::Add(vec![self, Node::Integer(other)])
-    }
-}
-
-impl<'a> std::ops::Add<i32> for &'a Node {
-    type Output = Node;
-
-    fn add(self, other: i32) -> Node {
-        self.clone().add(other)
-    }
-}
-
-impl std::ops::Add<Node> for i32 {
-    type Output = Node;
-
-    fn add(self, other: Node) -> Node {
-        Node::Add(vec![Node::Integer(self), other])
-    }
-}
-
-impl<'a> std::ops::Add<&'a Node> for i32 {
-    type Output = Node;
-
-    fn add(self, other: &'a Node) -> Node {
-        self.add(other.clone())
-    }
-}
+binary_ops_other_cast!(Mul, mul, Expr, f64, Expr, Expr::Float);
+binary_ops_other_cast!(Mul, mul, &Expr, f64, Expr, Expr::Float);
+binary_ops_self_cast!(Mul, mul, f64, Expr, Expr, Expr::Float);
+binary_ops_self_cast!(Mul, mul, f64, &Expr, Expr, Expr::Float);
 
 struct Store {
     vars: Vec<f64>,
@@ -196,7 +316,7 @@ mod tests {
     use super::*;
     #[test]
     fn evaluation() {
-        use Node::*;
+        use Expr::*;
         let mut store = Store::new();
 
         assert_eq!(Float(1.0).value(&store), 1.0);
@@ -212,19 +332,12 @@ mod tests {
         let v = Variable(0);
         let p = Parameter(0);
 
-        // Variable reuse
         assert_eq!((&v + &p).value(&store), 9.0);
 
         assert_eq!((&v + &p + 5).value(&store), 14.0);
         assert_eq!((3 + &v + &p + 5).value(&store), 17.0);
 
-        // This works, but just checking
-        //let n = Node::Add(vec![Integer(0)]);
-        //let mut m = n;
-        //match m {
-        //    Add(ref mut v) => v.push(Integer(1)),
-        //    _ => (),
-        //}
-        //assert_eq!(m.value(&store), 1.0);
+        assert_eq!((&v + &p + 5.0).value(&store), 14.0);
+        assert_eq!((3.0 + &v + &p + 5.0).value(&store), 17.0);
     }
 }
