@@ -14,7 +14,7 @@ pub trait Evaluate {
     fn deriv(&self, ret: &Retrieve, vid: &ID) -> (f64, f64); // value, deriv
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Node {
     //Function(Box<Evaluate>, Vec<Node>), // need trait where can pass nodes
     Add(Vec<Node>),
@@ -78,6 +78,98 @@ impl Evaluate for Node {
     }
 }
 
+// With self
+impl std::ops::Add<Node> for Node {
+    type Output = Node;
+
+    fn add(self, other: Node) -> Node {
+        // Can optimise, check if child is Add and combine
+        match self {
+            Node::Add(mut ns) => {
+                match other {
+                    Node::Add(ref ons) => {
+                        ns.extend(ons.into_iter());
+                        Node::Add(ns)
+                    },
+                    _ => {
+                        ns.push(other);
+                        Node::Add(ns)
+                    },
+                }
+            },
+            _ => {
+                match other {
+                    Node::Add(mut ons) => {
+                        ons.push(self); // out of order now
+                        Node::Add(ons)
+                    },
+                    _ => {
+                        Node::Add(vec![self, other])
+                    },
+                }
+            },
+        }
+    }
+}
+
+impl<'a> std::ops::Add<&'a Node> for Node {
+    type Output = Node;
+
+    fn add(self, other: &'a Node) -> Node {
+        self.add(other.clone())
+    }
+}
+
+impl<'a> std::ops::Add<Node> for &'a Node {
+    type Output = Node;
+
+    fn add(self, other: Node) -> Node {
+        self.clone().add(other)
+    }
+}
+
+impl<'a, 'b> std::ops::Add<&'b Node> for &'a Node {
+    type Output = Node;
+
+    fn add(self, other: &'b Node) -> Node {
+        self.clone().add(other.clone())
+    }
+}
+
+// With numbers
+impl std::ops::Add<i32> for Node {
+    type Output = Node;
+
+    fn add(self, other: i32) -> Node {
+        // Could check if zero
+        Node::Add(vec![self, Node::Integer(other)])
+    }
+}
+
+impl<'a> std::ops::Add<i32> for &'a Node {
+    type Output = Node;
+
+    fn add(self, other: i32) -> Node {
+        self.clone().add(other)
+    }
+}
+
+impl std::ops::Add<Node> for i32 {
+    type Output = Node;
+
+    fn add(self, other: Node) -> Node {
+        Node::Add(vec![Node::Integer(self), other])
+    }
+}
+
+impl<'a> std::ops::Add<&'a Node> for i32 {
+    type Output = Node;
+
+    fn add(self, other: &'a Node) -> Node {
+        self.add(other.clone())
+    }
+}
+
 struct Store {
     vars: Vec<f64>,
     pars: Vec<f64>,
@@ -117,6 +209,22 @@ mod tests {
         store.pars.push(4.0);
         assert_eq!(Parameter(0).value(&store), 4.0);
 
-        let n = Add(vec![Variable(0), Parameter(0)));
+        let v = Variable(0);
+        let p = Parameter(0);
+
+        // Variable reuse
+        assert_eq!((&v + &p).value(&store), 9.0);
+
+        assert_eq!((&v + &p + 5).value(&store), 14.0);
+        assert_eq!((3 + &v + &p + 5).value(&store), 17.0);
+
+        // This works, but just checking
+        //let n = Node::Add(vec![Integer(0)]);
+        //let mut m = n;
+        //match m {
+        //    Add(ref mut v) => v.push(Integer(1)),
+        //    _ => (),
+        //}
+        //assert_eq!(m.value(&store), 1.0);
     }
 }
