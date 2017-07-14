@@ -517,6 +517,8 @@ impl Retrieve for Store {
     }
 }
 
+mod ipopt;
+
 #[cfg(test)]
 mod tests {
     use super::*;
