@@ -1,4 +1,6 @@
 
+use std::collections::HashSet;
+
 type ID = usize;
 
 // Should not expect an error, panic if out of bounds error.  We could add
@@ -48,24 +50,35 @@ impl<'a> RaiseTo for &'a Expr {
 }
 
 impl Expr {
-    fn call(&self, f: &mut FnMut(&Expr) -> ()) {
+    fn visit_top(&self, f: &mut FnMut(&Expr) -> ()) {
         use Expr::*;
         f(self);
         match *self {
-            Add(ref es) => for e in es { e.call(f); },
-            Mul(ref es) => for e in es { e.call(f); },
-            Neg(ref e) => e.call(f),
-            Pow(ref e, _) => e.call(f),
+            Add(ref es) => for e in es { e.visit_top(f); },
+            Mul(ref es) => for e in es { e.visit_top(f); },
+            Neg(ref e) => e.visit_top(f),
+            Pow(ref e, _) => e.visit_top(f),
             _ => (),
         };
     }
 
-    fn variables(&self) -> std::collections::HashSet<ID> {
+    fn visit_bot(&self, f: &mut FnMut(&Expr) -> ()) {
         use Expr::*;
-        use std::collections::HashSet;
+        match *self {
+            Add(ref es) => for e in es { e.visit_bot(f); },
+            Mul(ref es) => for e in es { e.visit_bot(f); },
+            Neg(ref e) => e.visit_bot(f),
+            Pow(ref e, _) => e.visit_bot(f),
+            _ => (),
+        };
+        f(self);
+    }
+
+    fn variables(&self) -> HashSet<ID> {
+        use Expr::*;
         let mut set = HashSet::new();
 
-        self.call(&mut |e: &Expr| {
+        self.visit_top(&mut |e: &Expr| {
             if let Variable(id) = *e {
                 set.insert(id);
             }
@@ -540,7 +553,7 @@ mod tests {
         use Expr::*;
         let e = Variable(0)*Variable(1) + Variable(2);
 
-        let mut expect = std::collections::HashSet::new();
+        let mut expect = HashSet::new();
         expect.insert(0);
         expect.insert(1);
         expect.insert(2);
