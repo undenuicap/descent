@@ -49,6 +49,29 @@ impl<'a> RaiseTo for &'a Expr {
     }
 }
 
+fn order(a: ID, b: ID) -> (ID, ID) {
+    if a > b { (b, a) } else { (a, b) }
+}
+
+struct Degree {
+    linear: HashSet<ID>,
+    quadratic: HashSet<(ID, ID)>,
+    nonlinear: HashSet<(ID, ID)>,
+}
+
+impl Degree {
+    fn new() -> Degree {
+        Degree {
+            linear: HashSet::new(),
+            quadratic: HashSet::new(),
+            nonlinear: HashSet::new(),
+        }
+    }
+
+    fn mul(&mut self, other: Degree) {
+    }
+}
+
 impl Expr {
     fn visit_top(&self, f: &mut FnMut(&Expr) -> ()) {
         use Expr::*;
@@ -84,6 +107,50 @@ impl Expr {
             }
         });
         set
+    }
+
+    fn degree(&self) -> Degree {
+        use Expr::*;
+        match *self {
+            Add(ref es) => {
+                let mut nl = Degree::new();
+                for e in es {
+                    let nle = e.degree();
+                    nl.linear.extend(nle.linear);
+                    nl.quadratic.extend(nle.quadratic);
+                    nl.nonlinear.extend(nle.nonlinear);
+                }
+                nl
+            },
+            Mul(ref es) => {
+                let mut nl = Degree::new();
+                for e in es {
+                    let nle = e.degree();
+                    //nl.linear.extend(nle.linear);
+                    //nl.quadratic.extend(nle.quadratic);
+                    //nl.nonlinear.extend(nle.nonlinear);
+                }
+                nl
+            },
+            Neg(ref e) => e.degree(),
+            Pow(ref e, p) => {
+                let nl = e.degree();
+                match p {
+                    0 => Degree::new(),
+                    1 => nl,
+                    2 => Degree::new(), // need to update
+                    _ => Degree::new(), // need to update
+                }
+            },
+            Variable(id) => {
+                let mut d = Degree::new();
+                d.linear.insert(id);
+                d
+            },
+            Parameter(_) => Degree::new(),
+            Float(_) => Degree::new(),
+            Integer(_) => Degree::new(),
+        }
     }
 }
 
