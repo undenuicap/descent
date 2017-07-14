@@ -11,7 +11,9 @@ pub trait Retrieve {
 
 pub trait Evaluate {
     fn value(&self, ret: &Retrieve) -> f64;
-    fn deriv(&self, ret: &Retrieve, vid: ID) -> (f64, f64); // value, deriv
+    fn deriv(&self, ret: &Retrieve, x: ID) -> (f64, f64); // f, f_x,
+    fn deriv2(&self, ret: &Retrieve, x: ID, y: ID)
+        -> (f64, f64, f64, f64); // f, f_x, f_y, f_xy
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +22,6 @@ pub enum Expr {
     Add(Vec<Expr>),
     Mul(Vec<Expr>),
     Neg(Box<Expr>), // negate
-    Inv(Box<Expr>), // invert
     Pow(Box<Expr>, i32),
     Variable(ID),
     Parameter(ID),
@@ -53,7 +54,6 @@ impl Evaluate for Expr {
             Add(ref es) => es.iter().fold(0.0, |a, e| { a + e.value(ret) }),
             Mul(ref es) => es.iter().fold(1.0, |a, e| { a*e.value(ret) }),
             Neg(ref e) => -e.value(ret),
-            Inv(ref e) => 1.0/e.value(ret),
             Pow(ref e, p) => e.value(ret).powi(p),
             Variable(id) => ret.get_var(id),
             Parameter(id) => ret.get_par(id),
@@ -62,36 +62,78 @@ impl Evaluate for Expr {
         }
     }
 
-    fn deriv(&self, ret: &Retrieve, vid: ID) -> (f64, f64) {
+    fn deriv(&self, ret: &Retrieve, x: ID) -> (f64, f64) {
         use Expr::*;
         match *self {
             Add(ref es) =>
                 es.iter().fold((0.0, 0.0), |a, n| {
-                    let r = n.deriv(ret, vid);
+                    let r = n.deriv(ret, x);
                     (a.0 + r.0, a.1 + r.1)
                 }),
             Mul(ref es) =>
                 es.iter().fold((1.0, 0.0), |a, n| {
-                    let r = n.deriv(ret, vid);
+                    let r = n.deriv(ret, x);
                     (a.0*r.0, a.0*r.1 + r.0*a.1)
                 }),
             Neg(ref e) => {
-                let r = e.deriv(ret, vid);
+                let r = e.deriv(ret, x);
                 (-r.0, -r.1)
             },
-            Inv(ref e) => {
-                let r = e.deriv(ret, vid);
-                (1.0/r.0, -r.1/(r.0*r.0))
-            },
             Pow(ref e, p) => {
-                let r = e.deriv(ret, vid);
-                (r.0.powi(p), r.1*(p as f64)*r.0.powi(p - 1))
+                let r = e.deriv(ret, x);
+                match p {
+                    0 => (1.0, 0.0),
+                    1 => r,
+                    _ => (r.0.powi(p), (p as f64)*r.0.powi(p - 1)*r.1),
+                }
             },
             Variable(id) =>
-                (ret.get_var(id), if id == vid { 1.0 } else { 0.0 }),
+                (ret.get_var(id), if id == x { 1.0 } else { 0.0 }),
             Parameter(id) => (ret.get_par(id), 0.0),
             Float(v) => (v, 0.0),
             Integer(v) => (v as f64, 0.0),
+        }
+    }
+
+    fn deriv2(&self, ret: &Retrieve, x: ID, y: ID) -> (f64, f64, f64, f64) {
+        use Expr::*;
+        match *self {
+            Add(ref es) =>
+                es.iter().fold((0.0, 0.0, 0.0, 0.0), |a, n| {
+                    let r = n.deriv2(ret, x, y);
+                    (a.0 + r.0, a.1 + r.1, a.2 + r.2, a.3 + r.3)
+                }),
+            Mul(ref es) =>
+                es.iter().fold((1.0, 0.0, 0.0, 0.0), |a, n| {
+                    let r = n.deriv2(ret, x, y);
+                    (a.0*r.0, a.0*r.1 + r.0*a.1, a.0*r.2 + r.0*a.2,
+                         a.0*r.3 + r.0*a.3 + a.1*r.2 + a.2*r.1)
+                }),
+            Neg(ref e) => {
+                let r = e.deriv2(ret, x, y);
+                (-r.0, -r.1, -r.2, -r.3)
+            },
+            Pow(ref e, p) => {
+                let r = e.deriv2(ret, x, y);
+                match p {
+                    0 => (1.0, 0.0, 0.0, 0.0),
+                    1 => r,
+                    _ => {
+                        let fl = r.0.powi(p - 1);
+                        let fll = r.0.powi(p - 2);
+                        (r.0.powi(p), (p as f64)*fl*r.1, (p as f64)*fl*r.2,
+                            ((p*p  - p) as f64)*fll*r.1*r.2 + (p as f64)*fl*r.3)
+                    },
+                }
+            },
+            Variable(id) =>
+                (ret.get_var(id),
+                    if id == x { 1.0 } else { 0.0 },
+                    if id == y { 1.0 } else { 0.0 },
+                    0.0),
+            Parameter(id) => (ret.get_par(id), 0.0, 0.0, 0.0),
+            Float(v) => (v, 0.0, 0.0, 0.0),
+            Integer(v) => (v as f64, 0.0, 0.0, 0.0),
         }
     }
 }
@@ -304,26 +346,11 @@ impl std::ops::Div<Expr> for Expr {
     fn div(self, other: Expr) -> Expr {
         match self {
             Expr::Mul(mut es) => {
-                match other {
-                    Expr::Inv(oe) => { // cancels out
-                        es.push(*oe);
-                        Expr::Mul(es)
-                    },
-                    _ => {
-                        es.push(Expr::Inv(Box::new(other)));
-                        Expr::Mul(es)
-                    },
-                }
+                es.push(Expr::Pow(Box::new(other), -1));
+                Expr::Mul(es)
             },
             _ => {
-                match other {
-                    Expr::Inv(oe) => {
-                        Expr::Mul(vec![self, *oe]) // cancels out
-                    },
-                    _ => {
-                        Expr::Mul(vec![self, Expr::Inv(Box::new(other))])
-                    },
-                }
+                Expr::Mul(vec![self, Expr::Pow(Box::new(other), -1)])
             },
         }
     }
@@ -432,6 +459,13 @@ mod tests {
             (45.0, 9.0));
         assert_eq!((Variable(0)*(7 + Variable(1))).deriv(&store, 1_usize),
             (45.0, 5.0));
+
+        assert_eq!((Variable(0)*Variable(1)).deriv2(
+                &store, 0_usize, 1_usize), (10.0, 2.0, 5.0, 1.0));
+        assert_eq!((Variable(0)*(7 + 3.0*Variable(1))).deriv2(
+                &store, 0_usize, 1_usize), (65.0, 13.0, 15.0, 3.0));
+        assert_eq!((Variable(0)*(7 + 3.0*Variable(1))).deriv2(
+                &store, 0_usize, 0_usize), (65.0, 13.0, 13.0, 0.0));
     }
 
     #[test]
@@ -442,8 +476,6 @@ mod tests {
         store.pars.push(4.0);
 
         assert_eq!((Variable(0)/Parameter(0)).value(&store), 5.0/4.0);
-        assert_eq!(Integer(5)/Inv(Box::new(Integer(6))),
-            Mul(vec![Integer(5), Integer(6)]));
 
         assert_eq!((Integer(5)/5.0).value(&store), 1.0);
         assert_eq!((1/Variable(0)).deriv(&store, 0_usize),
@@ -471,5 +503,8 @@ mod tests {
         assert_eq!(Variable(0).powi(2).value(&store), 25.0);
         assert_eq!((&Variable(0)).powi(2).value(&store), 25.0);
         assert_eq!(Variable(0).powi(2).deriv(&store, 0_usize), (25.0, 10.0));
+
+        assert_eq!((2*Variable(0).powi(2)).deriv2(
+                &store, 0_usize, 0_usize), (50.0, 20.0, 20.0, 4.0));
     }
 }
