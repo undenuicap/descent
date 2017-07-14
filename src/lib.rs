@@ -5,16 +5,16 @@ type ID = usize;
 // a verification call that gets done once, or on adding constraints and
 // objective to model check that variables and parameters are valid.
 pub trait Retrieve {
-    fn get_var(&self, vid: &ID) -> f64;
-    fn get_par(&self, pid: &ID) -> f64;
+    fn get_var(&self, vid: ID) -> f64;
+    fn get_par(&self, pid: ID) -> f64;
 }
 
 pub trait Evaluate {
     fn value(&self, ret: &Retrieve) -> f64;
-    fn deriv(&self, ret: &Retrieve, vid: &ID) -> (f64, f64); // value, deriv
+    fn deriv(&self, ret: &Retrieve, vid: ID) -> (f64, f64); // value, deriv
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     //Function(Box<Evaluate>, Vec<Expr>), // need trait where can pass nodes
     Add(Vec<Expr>),
@@ -28,6 +28,24 @@ pub enum Expr {
     Integer(i32),
 }
 
+// Have to use trait because straight fn overloading not possible
+trait RaiseTo {
+    fn powi(self, p: i32) -> Expr;
+}
+
+
+impl RaiseTo for Expr {
+    fn powi(self, p: i32) -> Expr {
+        Expr::Pow(Box::new(self), p)
+    }
+}
+
+impl<'a> RaiseTo for &'a Expr {
+    fn powi(self, p: i32) -> Expr {
+        Expr::Pow(Box::new(self.clone()), p)
+    }
+}
+
 impl Evaluate for Expr {
     fn value(&self, ret: &Retrieve) -> f64 {
         use Expr::*;
@@ -37,14 +55,14 @@ impl Evaluate for Expr {
             Neg(ref e) => -e.value(ret),
             Inv(ref e) => 1.0/e.value(ret),
             Pow(ref e, p) => e.value(ret).powi(p),
-            Variable(ref id) => ret.get_var(id),
-            Parameter(ref id) => ret.get_par(id),
+            Variable(id) => ret.get_var(id),
+            Parameter(id) => ret.get_par(id),
             Float(v) => v,
             Integer(v) => v as f64,
         }
     }
 
-    fn deriv(&self, ret: &Retrieve, vid: &ID) -> (f64, f64) {
+    fn deriv(&self, ret: &Retrieve, vid: ID) -> (f64, f64) {
         use Expr::*;
         match *self {
             Add(ref es) =>
@@ -69,9 +87,9 @@ impl Evaluate for Expr {
                 let r = e.deriv(ret, vid);
                 (r.0.powi(p), r.1*(p as f64)*r.0.powi(p - 1))
             },
-            Variable(ref id) =>
+            Variable(id) =>
                 (ret.get_var(id), if id == vid { 1.0 } else { 0.0 }),
-            Parameter(ref id) => (ret.get_par(id), 0.0),
+            Parameter(id) => (ret.get_par(id), 0.0),
             Float(v) => (v, 0.0),
             Integer(v) => (v as f64, 0.0),
         }
@@ -115,6 +133,14 @@ macro_rules! binary_ops {
             }
         }
     };
+}
+
+macro_rules! binary_ops_g3 {
+    ( $T:ident, $f:ident, $U:ty, $V:ty, $O:ty ) => {
+        binary_ops!($T, $f, &$U, &$V, $O);
+        binary_ops!($T, $f, $U, &$V, $O);
+        binary_ops!($T, $f, &$U, $V, $O);
+    }
 }
 
 macro_rules! binary_ops_self_cast {
@@ -195,6 +221,16 @@ macro_rules! binary_ops_other_cast {
     };
 }
 
+// Assuming that $V has copy trait and is value to be converted
+macro_rules! binary_ops_cast_g4 {
+    ( $T:ident, $f:ident, $U:ty, $V:ty, $O:ty, $C:expr ) => {
+        binary_ops_other_cast!($T, $f, $U, $V, $O, $C);
+        binary_ops_other_cast!($T, $f, &$U, $V, $O, $C);
+        binary_ops_self_cast!($T, $f, $V, $U, $O, $C);
+        binary_ops_self_cast!($T, $f, $V, &$U, $O, $C);
+    }
+}
+
 
 impl std::ops::Add<Expr> for Expr {
     type Output = Expr;
@@ -262,33 +298,69 @@ impl std::ops::Mul<Expr> for Expr {
     }
 }
 
-binary_ops!(Add, add, &Expr, &Expr, Expr);
-binary_ops!(Add, add, &Expr, Expr, Expr);
-binary_ops!(Add, add, Expr, &Expr, Expr);
+impl std::ops::Div<Expr> for Expr {
+    type Output = Expr;
 
-binary_ops!(Mul, mul, &Expr, &Expr, Expr);
-binary_ops!(Mul, mul, &Expr, Expr, Expr);
-binary_ops!(Mul, mul, Expr, &Expr, Expr);
+    fn div(self, other: Expr) -> Expr {
+        match self {
+            Expr::Mul(mut es) => {
+                match other {
+                    Expr::Inv(oe) => { // cancels out
+                        es.push(*oe);
+                        Expr::Mul(es)
+                    },
+                    _ => {
+                        es.push(Expr::Inv(Box::new(other)));
+                        Expr::Mul(es)
+                    },
+                }
+            },
+            _ => {
+                match other {
+                    Expr::Inv(oe) => {
+                        Expr::Mul(vec![self, *oe]) // cancels out
+                    },
+                    _ => {
+                        Expr::Mul(vec![self, Expr::Inv(Box::new(other))])
+                    },
+                }
+            },
+        }
+    }
+}
 
-binary_ops_other_cast!(Add, add, Expr, i32, Expr, Expr::Integer);
-binary_ops_other_cast!(Add, add, &Expr, i32, Expr, Expr::Integer);
-binary_ops_self_cast!(Add, add, i32, Expr, Expr, Expr::Integer);
-binary_ops_self_cast!(Add, add, i32, &Expr, Expr, Expr::Integer);
+impl std::ops::Neg for Expr {
+    type Output = Expr;
 
-binary_ops_other_cast!(Add, add, Expr, f64, Expr, Expr::Float);
-binary_ops_other_cast!(Add, add, &Expr, f64, Expr, Expr::Float);
-binary_ops_self_cast!(Add, add, f64, Expr, Expr, Expr::Float);
-binary_ops_self_cast!(Add, add, f64, &Expr, Expr, Expr::Float);
+    fn neg(self) -> Expr {
+        match self {
+            Expr::Neg(es) => *es,
+            Expr::Integer(v) => Expr::Integer(-v),
+            Expr::Float(v) => Expr::Float(-v),
+            _ => Expr::Neg(Box::new(self)),
+        }
+    }
+}
 
-binary_ops_other_cast!(Mul, mul, Expr, i32, Expr, Expr::Integer);
-binary_ops_other_cast!(Mul, mul, &Expr, i32, Expr, Expr::Integer);
-binary_ops_self_cast!(Mul, mul, i32, Expr, Expr, Expr::Integer);
-binary_ops_self_cast!(Mul, mul, i32, &Expr, Expr, Expr::Integer);
+impl<'a> std::ops::Neg for &'a Expr {
+    type Output = Expr;
 
-binary_ops_other_cast!(Mul, mul, Expr, f64, Expr, Expr::Float);
-binary_ops_other_cast!(Mul, mul, &Expr, f64, Expr, Expr::Float);
-binary_ops_self_cast!(Mul, mul, f64, Expr, Expr, Expr::Float);
-binary_ops_self_cast!(Mul, mul, f64, &Expr, Expr, Expr::Float);
+    fn neg(self) -> Expr {
+        self.clone().neg()
+    }
+}
+
+binary_ops_g3!(Add, add, Expr, Expr, Expr);
+binary_ops_g3!(Mul, mul, Expr, Expr, Expr);
+binary_ops_g3!(Div, div, Expr, Expr, Expr);
+
+binary_ops_cast_g4!(Add, add, Expr, i32, Expr, Expr::Integer);
+binary_ops_cast_g4!(Mul, mul, Expr, i32, Expr, Expr::Integer);
+binary_ops_cast_g4!(Div, div, Expr, i32, Expr, Expr::Integer);
+
+binary_ops_cast_g4!(Add, add, Expr, f64, Expr, Expr::Float);
+binary_ops_cast_g4!(Mul, mul, Expr, f64, Expr, Expr::Float);
+binary_ops_cast_g4!(Div, div, Expr, f64, Expr, Expr::Float);
 
 struct Store {
     vars: Vec<f64>,
@@ -302,12 +374,12 @@ impl Store {
 }
 
 impl Retrieve for Store {
-    fn get_var(&self, vid: &ID) -> f64 {
-        self.vars[*vid]
+    fn get_var(&self, vid: ID) -> f64 {
+        self.vars[vid]
     }
 
-    fn get_par(&self, pid: &ID) -> f64 {
-        self.pars[*pid]
+    fn get_par(&self, pid: ID) -> f64 {
+        self.pars[pid]
     }
 }
 
@@ -315,18 +387,18 @@ impl Retrieve for Store {
 mod tests {
     use super::*;
     #[test]
-    fn evaluation() {
+    fn addition() {
         use Expr::*;
         let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
 
         assert_eq!(Float(1.0).value(&store), 1.0);
 
-        store.vars.push(5.0);
         assert_eq!(Variable(0).value(&store), 5.0);
-        assert_eq!(Variable(0).deriv(&store, &0_usize), (5.0, 1.0));
-        assert_eq!(Variable(0).deriv(&store, &1_usize), (5.0, 0.0));
+        assert_eq!(Variable(0).deriv(&store, 0_usize), (5.0, 1.0));
+        assert_eq!(Variable(0).deriv(&store, 1_usize), (5.0, 0.0));
 
-        store.pars.push(4.0);
         assert_eq!(Parameter(0).value(&store), 4.0);
 
         let v = Variable(0);
@@ -339,5 +411,65 @@ mod tests {
 
         assert_eq!((&v + &p + 5.0).value(&store), 14.0);
         assert_eq!((3.0 + &v + &p + 5.0).value(&store), 17.0);
+    }
+
+    #[test]
+    fn multiplication() {
+        use Expr::*;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.vars.push(2.0);
+        store.pars.push(4.0);
+
+        assert_eq!((Variable(0)*Parameter(0)*5).value(&store), 100.0);
+        assert_eq!((Variable(0)*Parameter(0)).deriv(&store, 0_usize),
+            (20.0, 4.0));
+        assert_eq!((Variable(0)*Parameter(0)).deriv(&store, 1_usize),
+            (20.0, 0.0));
+        assert_eq!((Variable(0)*(7 + Variable(0))).deriv(&store, 0_usize),
+            (60.0, 17.0));
+        assert_eq!((Variable(0)*(7 + Variable(1))).deriv(&store, 0_usize),
+            (45.0, 9.0));
+        assert_eq!((Variable(0)*(7 + Variable(1))).deriv(&store, 1_usize),
+            (45.0, 5.0));
+    }
+
+    #[test]
+    fn division() {
+        use Expr::*;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
+
+        assert_eq!((Variable(0)/Parameter(0)).value(&store), 5.0/4.0);
+        assert_eq!(Integer(5)/Inv(Box::new(Integer(6))),
+            Mul(vec![Integer(5), Integer(6)]));
+
+        assert_eq!((Integer(5)/5.0).value(&store), 1.0);
+        assert_eq!((1/Variable(0)).deriv(&store, 0_usize),
+            (1.0/5.0, -1.0/25.0));
+    }
+
+    #[test]
+    fn negation() {
+        use Expr::*;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
+
+        assert_eq!((-Variable(0)).value(&store), -5.0);
+        assert_eq!((-(-Variable(0))), Variable(0));
+    }
+
+    #[test]
+    fn power() {
+        use Expr::*;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
+
+        assert_eq!(Variable(0).powi(2).value(&store), 25.0);
+        assert_eq!((&Variable(0)).powi(2).value(&store), 25.0);
+        assert_eq!(Variable(0).powi(2).deriv(&store, 0_usize), (25.0, 10.0));
     }
 }
