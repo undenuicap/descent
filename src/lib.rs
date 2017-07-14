@@ -47,6 +47,33 @@ impl<'a> RaiseTo for &'a Expr {
     }
 }
 
+impl Expr {
+    fn call(&self, f: &mut FnMut(&Expr) -> ()) {
+        use Expr::*;
+        f(self);
+        match *self {
+            Add(ref es) => for e in es { e.call(f); },
+            Mul(ref es) => for e in es { e.call(f); },
+            Neg(ref e) => e.call(f),
+            Pow(ref e, _) => e.call(f),
+            _ => (),
+        };
+    }
+
+    fn variables(&self) -> std::collections::HashSet<ID> {
+        use Expr::*;
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+
+        self.call(&mut |e: &Expr| {
+            if let Variable(id) = *e {
+                set.insert(id);
+            }
+        });
+        set
+    }
+}
+
 impl Evaluate for Expr {
     fn value(&self, ret: &Retrieve) -> f64 {
         use Expr::*;
@@ -506,5 +533,17 @@ mod tests {
 
         assert_eq!((2*Variable(0).powi(2)).deriv2(
                 &store, 0_usize, 0_usize), (50.0, 20.0, 20.0, 4.0));
+    }
+
+    #[test]
+    fn collecting() {
+        use Expr::*;
+        let e = Variable(0)*Variable(1) + Variable(2);
+
+        let mut expect = std::collections::HashSet::new();
+        expect.insert(0);
+        expect.insert(1);
+        expect.insert(2);
+        assert_eq!(e.variables(), expect);
     }
 }
