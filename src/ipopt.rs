@@ -11,88 +11,98 @@ type Int = i32;
 type Bool = i32;
 type UserDataPtr = *mut c_void;
 
-struct IpoptProblemInfo;
-type IpoptProblem = *mut IpoptProblemInfo;
+//#[repr(C)]
+//struct IpoptProblemInfo;
+//type IpoptProblem = *mut IpoptProblemInfo;
+type IpoptProblem = *mut c_void; // don't access IpoptProblemInfo, so treat void
 
+#[derive(Debug, PartialEq)]
+#[repr(C)]
 enum ApplicationReturnStatus {
-    Solve_Succeeded = 0,
-    Solved_To_Acceptable_Level = 1,
-    Infeasible_Problem_Detected = 2,
-    Search_Direction_Becomes_Too_Small = 3,
-    Diverging_Iterates = 4,
-    User_Requested_Stop = 5,
-    Feasible_Point_Found = 6,
+    SolveSucceeded = 0,
+    SolvedToAcceptableLevel = 1,
+    InfeasibleProblemDetected = 2,
+    SearchDirectionBecomesTooSmall = 3,
+    DivergingIterates = 4,
+    UserRequestedStop = 5,
+    FeasiblePointFound = 6,
 
-    Maximum_Iterations_Exceeded = -1,
-    Restoration_Failed = -2,
-    Error_In_Step_Computation = -3,
-    Maximum_CpuTime_Exceeded = -4,
-    Not_Enough_Degrees_Of_Freedom = -10,
-    Invalid_Problem_Definition = -11,
-    Invalid_Option = -12,
-    Invalid_Number_Detected = -13,
+    MaximumIterationsExceeded = -1,
+    RestorationFailed = -2,
+    ErrorInStepComputation = -3,
+    MaximumCpuTimeExceeded = -4,
+    NotEnoughDegreesOfFreedom = -10,
+    InvalidProblemDefinition = -11,
+    InvalidOption = -12,
+    InvalidNumberDetected = -13,
 
-    Unrecoverable_Exception = -100,
-    NonIpopt_Exception_Thrown = -101,
-    Insufficient_Memory = -102,
-    Internal_Error = -199
+    UnrecoverableException = -100,
+    NonIpoptExceptionThrown = -101,
+    InsufficientMemory = -102,
+    InternalError = -199
 }
 
 // See IpStdCInterface.h for descriptions
-type Eval_F_CB = fn(n: Index,
-                    x: *const Number,
-                    new_x: Bool,
-                    obj_value: *mut Number,
-                    user_data: UserDataPtr) -> Bool;
+type EvalFCB = extern fn(
+        n: Index,
+        x: *const Number,
+        new_x: Bool,
+        obj_value: *mut Number,
+        user_data: UserDataPtr) -> Bool;
 
-type Eval_Grad_F_CB = fn(n: Index,
-                         x: *const Number,
-                         new_x: Bool,
-                         grad_f: *mut Number,
-                         user_data: UserDataPtr) -> Bool;
+type EvalGradFCB = extern fn(
+        n: Index,
+        x: *const Number,
+        new_x: Bool,
+        grad_f: *mut Number,
+        user_data: UserDataPtr) -> Bool;
 
-type Eval_G_CB = fn(n: Index,
-                    x: *const Number,
-                    new_x: Bool,
-                    m: Index,
-                    g: *const Number,
-                    user_data: UserDataPtr) -> Bool;
+type EvalGCB = extern fn(
+        n: Index,
+        x: *const Number,
+        new_x: Bool,
+        m: Index,
+        g: *const Number,
+        user_data: UserDataPtr) -> Bool;
 
-type Eval_Jac_G_CB = fn(n: Index,
-                        x: *const Number,
-                        new_x: Bool,
-                        m: Index,
-                        nele_jac: Index,
-                        iRow: *mut Index,
-                        jCol: *mut Index,
-                        values: *mut Number,
-                        user_data: UserDataPtr) -> Bool;
+type EvalJacGCB = extern fn(
+        n: Index,
+        x: *const Number,
+        new_x: Bool,
+        m: Index,
+        nele_jac: Index,
+        i_row: *mut Index,
+        j_col: *mut Index,
+        values: *mut Number,
+        user_data: UserDataPtr) -> Bool;
 
-type Eval_H_CB = fn(n: Index,
-                    x: *const Number,
-                    new_x: Bool,
-                    obj_factor: Number,
-                    m: Index,
-                    lambda: *const Number,
-                    new_lambda: Bool,
-                    nele_hess: Index,
-                    iRow: *mut Index,
-                    jCol: *mut Index,
-                    values: *mut Number,
-                    user_data: UserDataPtr) -> Bool;
+type EvalHCB = extern fn(
+        n: Index,
+        x: *const Number,
+        new_x: Bool,
+        obj_factor: Number,
+        m: Index,
+        lambda: *const Number,
+        new_lambda: Bool,
+        nele_hess: Index,
+        i_row: *mut Index,
+        j_col: *mut Index,
+        values: *mut Number,
+        user_data: UserDataPtr) -> Bool;
 
-type Intermediate_CB = fn(alg_mod: Index,
-                          iter_count: Index,
-                          obj_value: Number,
-                          inf_pr: Number,
-                          inf_du: Number,
-                          mu: Number,
-                          d_norm: Number,
-                          regularization_size: Number,
-                          alpha_du: Number,
-                          alpha_pr: Number,
-                          ls_trials: Number,
-                          user_data: UserDataPtr) -> Bool;
+type IntermediateCB = extern fn(
+        alg_mod: Index,
+        iter_count: Index,
+        obj_value: Number,
+        inf_pr: Number,
+        inf_du: Number,
+        mu: Number,
+        d_norm: Number,
+        regularization_size: Number,
+        alpha_du: Number,
+        alpha_pr: Number,
+        ls_trials: Number,
+        user_data: UserDataPtr) -> Bool;
 
 #[link(name = "ipopt")]
 extern {
@@ -106,11 +116,11 @@ extern {
             nele_jac: Index, // non-zeros in constraint jacobian
             nele_hess: Index, // non-zeros in lagrangian hessian
             index_style: Index, // indexing style, 0: C, 1 Fortran
-            eval_f: Eval_F_CB,
-            eval_g: Eval_G_CB,
-            eval_grad_f: Eval_Grad_F_CB,
-            eval_jac_g: Eval_Jac_G_CB,
-            eval_h: Eval_H_CB) -> IpoptProblem;
+            eval_f: EvalFCB,
+            eval_g: EvalGCB,
+            eval_grad_f: EvalGradFCB,
+            eval_jac_g: EvalJacGCB,
+            eval_h: EvalHCB) -> IpoptProblem;
 
     fn FreeIpoptProblem(ipopt_problem: IpoptProblem);
 
@@ -127,61 +137,68 @@ extern {
                          val: Int) -> Bool;
 
     fn IpoptSolve(
-        ipopt_problem: IpoptProblem,
-        x: *const Number,
-        g: *mut Number,
-        obj_val: *mut Number,
-        mult_g: *const Number,
-        mult_x_L: *const Number,
-        mult_x_U: *const Number,
-        user_data: UserDataPtr) -> ApplicationReturnStatus;
+            ipopt_problem: IpoptProblem,
+            x: *const Number,
+            g: *mut Number,
+            obj_val: *mut Number,
+            mult_g: *const Number,
+            mult_x_L: *const Number,
+            mult_x_U: *const Number,
+            user_data: UserDataPtr) -> ApplicationReturnStatus;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn f(n: Index,
-         x: *const Number,
-         new_x: Bool,
-         obj_value: *mut Number,
-         user_data: UserDataPtr) -> Bool {
+    #[allow(non_snake_case)]
+    extern fn f(
+            n: Index,
+            x: *const Number,
+            new_x: Bool,
+            obj_value: *mut Number,
+            user_data: UserDataPtr) -> Bool {
         unsafe {
             *obj_value = (*x)*(*x);
         }
         1
     }
 
-    fn f_grad(n: Index,
-              x: *const Number,
-              new_x: Bool,
-              grad_f: *mut Number,
-              user_data: UserDataPtr) -> Bool {
+    #[allow(non_snake_case)]
+    extern fn f_grad(
+            n: Index,
+            x: *const Number,
+            new_x: Bool,
+            grad_f: *mut Number,
+            user_data: UserDataPtr) -> Bool {
         unsafe {
             *grad_f = 1.0;
         }
         1
     }
 
-    fn g(n: Index,
-         x: *const Number,
-         new_x: Bool,
-         m: Index,
-         g: *const Number,
-         user_data: UserDataPtr) -> Bool {
+    #[allow(non_snake_case)]
+    extern fn g(
+            n: Index,
+            x: *const Number,
+            new_x: Bool,
+            m: Index,
+            g: *const Number,
+            user_data: UserDataPtr) -> Bool {
         1
     }
 
-    fn g_jac(n: Index,
-             x: *const Number,
-             new_x: Bool,
-             m: Index,
-             nele_jac: Index,
-             iRow: *mut Index,
-             jCol: *mut Index,
-             values: *mut Number,
-             user_data: UserDataPtr) -> Bool {
-        if iRow != ptr::null_mut() && jCol != ptr::null_mut() {
+    extern fn g_jac(
+            n: Index,
+            x: *const Number,
+            new_x: Bool,
+            m: Index,
+            nele_jac: Index,
+            i_row: *mut Index,
+            j_col: *mut Index,
+            values: *mut Number,
+            user_data: UserDataPtr) -> Bool {
+        if i_row != ptr::null_mut() && j_col != ptr::null_mut() {
             // set sparsity
         } else {
             // set values
@@ -189,22 +206,23 @@ mod tests {
         1
     }
 
-    fn l_hess(n: Index,
-              x: *const Number,
-              new_x: Bool,
-              obj_factor: Number,
-              m: Index,
-              lambda: *const Number,
-              new_lambda: Bool,
-              nele_hess: Index,
-              iRow: *mut Index,
-              jCol: *mut Index,
-              values: *mut Number,
-              user_data: UserDataPtr) -> Bool {
+    extern fn l_hess(
+            n: Index,
+            x: *const Number,
+            new_x: Bool,
+            obj_factor: Number,
+            m: Index,
+            lambda: *const Number,
+            new_lambda: Bool,
+            nele_hess: Index,
+            i_row: *mut Index,
+            j_col: *mut Index,
+            values: *mut Number,
+            user_data: UserDataPtr) -> Bool {
         unsafe {
-            if iRow != ptr::null_mut() && jCol != ptr::null_mut() {
-                *iRow = 0;
-                *jCol = 0;
+            if i_row != ptr::null_mut() && j_col != ptr::null_mut() {
+                *i_row = 0;
+                *j_col = 0;
                 // set sparsity
             } else {
                 *values = 2.0;
@@ -221,28 +239,28 @@ mod tests {
         let g_lb = vec![];
         let g_ub = vec![];
         unsafe {
-            let mut prob = CreateIpoptProblem(1,
-                                              x_lb.as_ptr(),
-                                              x_ub.as_ptr(),
-                                              0,
-                                              g_lb.as_ptr(),
-                                             g_ub.as_ptr(),
-                                              0,
-                                              1,
-                                              0,
-                                              f,
-                                              g,
-                                              f_grad,
-                                              g_jac,
-                                              l_hess);
+            let prob = CreateIpoptProblem(1,
+                                          x_lb.as_ptr(),
+                                          x_ub.as_ptr(),
+                                          0,
+                                          g_lb.as_ptr(),
+                                          g_ub.as_ptr(),
+                                          0,
+                                          1,
+                                          0,
+                                          f,
+                                          g,
+                                          f_grad,
+                                          g_jac,
+                                          l_hess);
             assert!(prob != ptr::null_mut());
-            let mut opt = CString::new("print_level").unwrap();
+            let opt = CString::new("print_level").unwrap();
             let set = AddIpoptIntOption(prob, opt.as_ptr(), 0);
             assert!(set != 0);
             let opt = CString::new("sb").unwrap();
             let opt_val = CString::new("yes").unwrap();
             AddIpoptStrOption(prob, opt.as_ptr(), opt_val.as_ptr());
-            let mut x = vec![0.5];
+            let x = vec![0.5];
             let mut obj_val = 0.0;
             let ret = IpoptSolve(prob,
                                  x.as_ptr(),
@@ -252,6 +270,7 @@ mod tests {
                                  ptr::null_mut(),
                                  ptr::null_mut(),
                                  ptr::null_mut());
+            assert_eq!(ret, ApplicationReturnStatus::SolveSucceeded);
             assert_eq!(x[0], 0.2);
             FreeIpoptProblem(prob);
         }
