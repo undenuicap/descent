@@ -14,7 +14,9 @@ type UserDataPtr = *mut c_void;
 //#[repr(C)]
 //struct IpoptProblemInfo;
 //type IpoptProblem = *mut IpoptProblemInfo;
-type IpoptProblem = *mut c_void; // don't access IpoptProblemInfo, so treat void
+//type IpoptProblem = *mut c_void; // don't access IpoptProblemInfo, so treat void
+enum IpoptProblemInfo {} // type-safe way to represent opaque structs
+type IpoptProblem = *mut IpoptProblemInfo;
 
 #[derive(Debug, PartialEq)]
 #[repr(C)]
