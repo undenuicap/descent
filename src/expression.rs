@@ -52,22 +52,82 @@ fn order(a: ID, b: ID) -> (ID, ID) {
     if a > b { (b, a) } else { (a, b) }
 }
 
+#[derive(Debug, PartialEq, Clone)]
 struct Degree {
     linear: HashSet<ID>,
-    quadratic: HashSet<(ID, ID)>,
-    nonlinear: HashSet<(ID, ID)>,
+    //quadratic: HashSet<(ID, ID)>,
+    higher: HashSet<(ID, ID)>,
 }
 
 impl Degree {
     fn new() -> Degree {
         Degree {
             linear: HashSet::new(),
-            quadratic: HashSet::new(),
-            nonlinear: HashSet::new(),
+            //quadratic: HashSet::new(),
+            higher: HashSet::new(),
         }
     }
 
-    fn mul(&mut self, other: Degree) {
+    fn is_empty(&self) -> bool {
+        self.linear.is_empty() && self.higher.is_empty()
+    }
+
+    fn add(&self, other: &Degree) -> Degree {
+        Degree {
+            linear: self.linear.union(&(other.linear)).cloned().collect(),
+            higher: self.higher.union(&(other.higher)).cloned().collect(),
+        }
+    }
+
+    fn mul(&self, other: &Degree) -> Degree {
+        // If one has no entries then can just add
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            let mut higher = HashSet::new();
+
+            // linear x linear
+            for s in self.linear.iter().cloned() {
+                for o in other.linear.iter().cloned() {
+                    higher.insert(order(s, o));
+                }
+            }
+
+            // linear x higher
+            for &(s1, s2) in &(self.higher) {
+                for o in other.linear.iter().cloned() {
+                    higher.insert(order(s1, o));
+                    higher.insert(order(s2, o));
+                }
+                higher.insert((s1, s2));
+            }
+
+            // linear x higher
+            for &(o1, o2) in &(other.higher) {
+                for s in self.linear.iter().cloned() {
+                    higher.insert(order(o1, s));
+                    higher.insert(order(o2, s));
+                }
+                higher.insert((o1, o2));
+            }
+
+            // higher x higher
+            for &(s1, s2) in &(self.higher) {
+                for &(o1, o2) in &(other.higher) {
+                    higher.insert(order(s1, o1));
+                    higher.insert(order(s1, o2));
+                    higher.insert(order(s2, o1));
+                    higher.insert(order(s2, o2));
+                }
+            }
+
+            Degree {
+                linear: HashSet::new(), // have all been promoted
+                higher: higher,
+            }
+        }
     }
 }
 
@@ -111,34 +171,19 @@ impl Expr {
     fn degree(&self) -> Degree {
         use expression::Expr::*;
         match *self {
-            Add(ref es) => {
-                let mut nl = Degree::new();
-                for e in es {
-                    let nle = e.degree();
-                    nl.linear.extend(nle.linear);
-                    nl.quadratic.extend(nle.quadratic);
-                    nl.nonlinear.extend(nle.nonlinear);
-                }
-                nl
-            },
-            Mul(ref es) => {
-                let mut nl = Degree::new();
-                for e in es {
-                    let nle = e.degree();
-                    //nl.linear.extend(nle.linear);
-                    //nl.quadratic.extend(nle.quadratic);
-                    //nl.nonlinear.extend(nle.nonlinear);
-                }
-                nl
-            },
+            Add(ref es) => es.iter().fold(Degree::new(), |a, e| {
+                a.add(&(e.degree()))
+            }),
+            Mul(ref es) => es.iter().fold(Degree::new(), |a, e| {
+                a.mul(&(e.degree()))
+            }),
             Neg(ref e) => e.degree(),
             Pow(ref e, p) => {
-                let nl = e.degree();
+                let d = e.degree();
                 match p {
-                    0 => Degree::new(),
-                    1 => nl,
-                    2 => Degree::new(), // need to update
-                    _ => Degree::new(), // need to update
+                    0 => Degree::new(), // cleared
+                    1 => d,
+                    _ => d.mul(&d),
                 }
             },
             Variable(id) => {
@@ -624,5 +669,20 @@ mod tests {
         expect.insert(1);
         expect.insert(2);
         assert_eq!(e.variables(), expect);
+    }
+
+    #[test]
+    fn degree() {
+        use expression::Expr::*;
+        use expression::Degree;
+        let e = (Variable(0)*Variable(1) + Variable(4))*Variable(5) + Variable(2);
+
+        let mut expect = Degree::new();
+        expect.linear.insert(2);
+        expect.higher.insert((0, 1));
+        expect.higher.insert((0, 5));
+        expect.higher.insert((1, 5));
+        expect.higher.insert((4, 5));
+        assert_eq!(e.degree(), expect);
     }
 }
