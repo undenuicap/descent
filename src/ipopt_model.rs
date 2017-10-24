@@ -23,16 +23,26 @@ struct IpoptModel {
     obj: Expr,
 }
 
+impl IpoptModel {
+    fn new() -> IpoptModel {
+        IpoptModel {
+            vars: Vec::new(),
+            cons: Vec::new(),
+            obj: Expr::Integer(0),
+        }
+    }
+}
+
 impl Model for IpoptModel {
     fn add_var(&mut self, lb: f64, ub: f64) -> Expr {
         let id = self.vars.len();
-        self.vars.push(Variable {id: id, lb: lb, ub: ub, init: 0.0 });
+        self.vars.push(Variable { id: id, lb: lb, ub: ub, init: 0.0 });
         Expr::Variable(id)
     }
 
     fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) {
         let id = self.cons.len();
-        self.cons.push(Constraint {id: id, expr: expr, lb: lb, ub: ub });
+        self.cons.push(Constraint { id: id, expr: expr, lb: lb, ub: ub });
     }
 
     fn set_obj(&mut self, expr: Expr) {
@@ -44,16 +54,30 @@ impl Model for IpoptModel {
         let mut x_ub: Vec<f64> = Vec::new();
         let mut g_lb: Vec<f64> = Vec::new();
         let mut g_ub: Vec<f64> = Vec::new();
+        let mut nele_jac: usize = 0; // need to set
+        let mut nele_hess: usize = 0; // need to set
         for v in &self.vars {
             x_lb.push(v.lb);
             x_ub.push(v.ub);
         }
-        for c in &self.cons {
-            g_lb.push(c.lb);
-            g_ub.push(c.ub);
+        // Probably store ordered variables for each constraint
+        // Store mapping between higher order pairs to vector of relevant
+        // constraints
+        // Could assume obj needs to be called on each mapped pair (vector is
+        // empty if just objective)
+        {
+            let obj_deg = self.obj.degree();
+            nele_hess += obj_deg.higher.len();
+            for c in &self.cons {
+                g_lb.push(c.lb);
+                g_ub.push(c.ub);
+                nele_jac += c.expr.variables().len();
+                // Think should hen subtract obj entries from each constraint
+                // This might be easier once work out what doing with maps
+                //nele_hess += c.expr.degree().add(&obj_deg).higher.len();
+                nele_hess += c.expr.degree().higher.len();
+            }
         }
-        let nele_jac: usize = 0; // need to set
-        let nele_hess: usize = 0; // need to set
         // All rest should be handled in callbacks
         //let prob = CreateIpoptProblem(self.vars.len(),
         //                              x_lb.as_ptr(),
@@ -98,6 +122,7 @@ extern fn f(
     let model: &IpoptModel = unsafe { &*(user_data as *const IpoptModel) };
 
     let pars: Vec<f64> = Vec::new(); // temporary, should link to model pars
+    // should check n is what we expect, maybe panic if not
     let store = Store {
         vars: unsafe { slice::from_raw_parts(x, n as usize) },
         pars: &pars,
@@ -106,4 +131,16 @@ extern fn f(
         *obj_value = model.obj.value(&store);
     }
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn easy_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0);
+        m.set_obj(&x*&x);
+        m.solve();
+    }
 }

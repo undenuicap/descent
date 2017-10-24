@@ -53,14 +53,14 @@ fn order(a: ID, b: ID) -> (ID, ID) {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct Degree {
-    linear: HashSet<ID>,
+pub struct Degree {
+    pub linear: HashSet<ID>,
     //quadratic: HashSet<(ID, ID)>,
-    higher: HashSet<(ID, ID)>,
+    pub higher: HashSet<(ID, ID)>,
 }
 
 impl Degree {
-    fn new() -> Degree {
+    pub fn new() -> Degree {
         Degree {
             linear: HashSet::new(),
             //quadratic: HashSet::new(),
@@ -68,18 +68,18 @@ impl Degree {
         }
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.linear.is_empty() && self.higher.is_empty()
     }
 
-    fn add(&self, other: &Degree) -> Degree {
+    pub fn add(&self, other: &Degree) -> Degree {
         Degree {
             linear: self.linear.union(&(other.linear)).cloned().collect(),
             higher: self.higher.union(&(other.higher)).cloned().collect(),
         }
     }
 
-    fn mul(&self, other: &Degree) -> Degree {
+    pub fn mul(&self, other: &Degree) -> Degree {
         // If one has no entries then can just add
         if self.is_empty() {
             other.clone()
@@ -132,7 +132,7 @@ impl Degree {
 }
 
 impl Expr {
-    fn visit_top(&self, f: &mut FnMut(&Expr) -> ()) {
+    pub fn visit_top(&self, f: &mut FnMut(&Expr) -> ()) {
         use expression::Expr::*;
         f(self);
         match *self {
@@ -144,7 +144,7 @@ impl Expr {
         };
     }
 
-    fn visit_bot(&self, f: &mut FnMut(&Expr) -> ()) {
+    pub fn visit_bot(&self, f: &mut FnMut(&Expr) -> ()) {
         use expression::Expr::*;
         match *self {
             Add(ref es) => for e in es { e.visit_bot(f); },
@@ -156,7 +156,7 @@ impl Expr {
         f(self);
     }
 
-    fn variables(&self) -> HashSet<ID> {
+    pub fn variables(&self) -> HashSet<ID> {
         use expression::Expr::*;
         let mut set = HashSet::new();
 
@@ -168,7 +168,7 @@ impl Expr {
         set
     }
 
-    fn degree(&self) -> Degree {
+    pub fn degree(&self) -> Degree {
         use expression::Expr::*;
         match *self {
             Add(ref es) => es.iter().fold(Degree::new(), |a, e| {
