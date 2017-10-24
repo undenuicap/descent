@@ -1,7 +1,7 @@
 use std;
 use std::collections::HashSet;
 
-type ID = usize;
+pub type ID = usize;
 
 // Should not expect an error, panic if out of bounds error.  We could add
 // a verification call that gets done once, or on adding constraints and

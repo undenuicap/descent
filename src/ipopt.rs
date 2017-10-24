@@ -5,11 +5,11 @@ use std::os::raw::c_char;
 use std::ffi::CString;
 use self::libc::c_void;
 
-type Number = f64;
-type Index = i32;
-type Int = i32;
-type Bool = i32;
-type UserDataPtr = *mut c_void;
+pub type Number = f64;
+pub type Index = i32;
+pub type Int = i32;
+pub type Bool = i32;
+pub type UserDataPtr = *mut c_void;
 
 //#[repr(C)]
 //struct IpoptProblemInfo;

@@ -10,7 +10,7 @@ pub trait Model {
     fn add_var(&mut self, lb: f64, ub: f64) -> Expr;
     fn add_con(&mut self, expr: Expr, lb: f64, ub: f64);
     fn set_obj(&mut self, expr: Expr);
-    fn solve(&mut self);
+    fn solve(&self);
 }
 
 pub trait MIModel {

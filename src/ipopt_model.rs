@@ -1,5 +1,7 @@
-use expression::Expr;
+use expression::{Expr, Evaluate, Retrieve, ID};
 use model::{Model, VarType};
+use ipopt;
+use std::slice;
 
 struct Variable {
     id: usize,
@@ -37,6 +39,71 @@ impl Model for IpoptModel {
         self.obj = expr;
     }
 
-    fn solve(&mut self) {
+    fn solve(&self) {
+        let mut x_lb: Vec<f64> = Vec::new();
+        let mut x_ub: Vec<f64> = Vec::new();
+        let mut g_lb: Vec<f64> = Vec::new();
+        let mut g_ub: Vec<f64> = Vec::new();
+        for v in &self.vars {
+            x_lb.push(v.lb);
+            x_ub.push(v.ub);
+        }
+        for c in &self.cons {
+            g_lb.push(c.lb);
+            g_ub.push(c.ub);
+        }
+        let nele_jac: usize = 0; // need to set
+        let nele_hess: usize = 0; // need to set
+        // All rest should be handled in callbacks
+        //let prob = CreateIpoptProblem(self.vars.len(),
+        //                              x_lb.as_ptr(),
+        //                              x_ub.as_ptr(),
+        //                              self.cons.len(),
+        //                              g_lb.as_ptr(),
+        //                              g_ub.as_ptr(),
+        //                              nele_jac,
+        //                              nele_hess,
+        //                              0, // C-style indexing
+        //                              f,
+        //                              g,
+        //                              f_grad,
+        //                              g_jac,
+        //                              l_hess);
     }
+}
+
+struct Store<'a> {
+    vars: &'a [ipopt::Number],
+    pars: &'a Vec<f64>,
+}
+
+impl<'a> Retrieve for Store<'a> {
+    fn get_var(&self, vid: ID) -> f64 {
+        self.vars[vid]
+    }
+
+    fn get_par(&self, pid: ID) -> f64 {
+        self.pars[pid]
+    }
+}
+
+#[allow(non_snake_case)]
+extern fn f(
+        n: ipopt::Index,
+        x: *const ipopt::Number,
+        new_x: ipopt::Bool,
+        obj_value: *mut ipopt::Number,
+        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+
+    let model: &IpoptModel = unsafe { &*(user_data as *const IpoptModel) };
+
+    let pars: Vec<f64> = Vec::new(); // temporary, should link to model pars
+    let store = Store {
+        vars: unsafe { slice::from_raw_parts(x, n as usize) },
+        pars: &pars,
+    };
+    unsafe {
+        *obj_value = model.obj.value(&store);
+    }
+    1
 }
