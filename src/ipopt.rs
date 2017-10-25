@@ -15,12 +15,12 @@ pub type UserDataPtr = *mut c_void;
 //struct IpoptProblemInfo;
 //type IpoptProblem = *mut IpoptProblemInfo;
 //type IpoptProblem = *mut c_void; // don't access IpoptProblemInfo, so treat void
-enum IpoptProblemInfo {} // type-safe way to represent opaque structs
-type IpoptProblem = *mut IpoptProblemInfo;
+pub enum IpoptProblemInfo {} // type-safe way to represent opaque structs
+pub type IpoptProblem = *mut IpoptProblemInfo;
 
 #[derive(Debug, PartialEq)]
 #[repr(C)]
-enum ApplicationReturnStatus {
+pub enum ApplicationReturnStatus {
     SolveSucceeded = 0,
     SolvedToAcceptableLevel = 1,
     InfeasibleProblemDetected = 2,
@@ -64,7 +64,7 @@ type EvalGCB = extern fn(
         x: *const Number,
         new_x: Bool,
         m: Index,
-        g: *const Number,
+        g: *mut Number,
         user_data: UserDataPtr) -> Bool;
 
 type EvalJacGCB = extern fn(
@@ -108,7 +108,9 @@ type IntermediateCB = extern fn(
 
 #[link(name = "ipopt")]
 extern {
-    fn CreateIpoptProblem(
+    // See IpStdCInterface.h
+
+    pub fn CreateIpoptProblem(
             n: Index, // number of variables
             x_L: *const Number, // variable lower bounds
             x_U: *const Number, // variable upper bounds
@@ -124,28 +126,28 @@ extern {
             eval_jac_g: EvalJacGCB,
             eval_h: EvalHCB) -> IpoptProblem;
 
-    fn FreeIpoptProblem(ipopt_problem: IpoptProblem);
+    pub fn FreeIpoptProblem(ipopt_problem: IpoptProblem);
 
-    fn AddIpoptStrOption(ipopt_problem: IpoptProblem,
+    pub fn AddIpoptStrOption(ipopt_problem: IpoptProblem,
                          keyword: *const c_char,
                          val: *const c_char) -> Bool;
 
-    fn AddIpoptNumOption(ipopt_problem: IpoptProblem,
+    pub fn AddIpoptNumOption(ipopt_problem: IpoptProblem,
                          keyword: *const c_char,
                          val: Number) -> Bool;
 
-    fn AddIpoptIntOption(ipopt_problem: IpoptProblem,
+    pub fn AddIpoptIntOption(ipopt_problem: IpoptProblem,
                          keyword: *const c_char,
                          val: Int) -> Bool;
 
-    fn IpoptSolve(
+    pub fn IpoptSolve(
             ipopt_problem: IpoptProblem,
-            x: *const Number,
+            x: *mut Number,
             g: *mut Number,
             obj_val: *mut Number,
-            mult_g: *const Number,
-            mult_x_L: *const Number,
-            mult_x_U: *const Number,
+            mult_g: *mut Number,
+            mult_x_L: *mut Number,
+            mult_x_U: *mut Number,
             user_data: UserDataPtr) -> ApplicationReturnStatus;
 }
 
@@ -155,11 +157,11 @@ mod tests {
 
     #[allow(non_snake_case)]
     extern fn f(
-            n: Index,
+            _n: Index,
             x: *const Number,
-            new_x: Bool,
+            _new_x: Bool,
             obj_value: *mut Number,
-            user_data: UserDataPtr) -> Bool {
+            _user_data: UserDataPtr) -> Bool {
         unsafe {
             *obj_value = (*x)*(*x);
         }
@@ -168,11 +170,11 @@ mod tests {
 
     #[allow(non_snake_case)]
     extern fn f_grad(
-            n: Index,
-            x: *const Number,
-            new_x: Bool,
+            _n: Index,
+            _x: *const Number,
+            _new_x: Bool,
             grad_f: *mut Number,
-            user_data: UserDataPtr) -> Bool {
+            _user_data: UserDataPtr) -> Bool {
         unsafe {
             *grad_f = 1.0;
         }
@@ -181,26 +183,26 @@ mod tests {
 
     #[allow(non_snake_case)]
     extern fn g(
-            n: Index,
-            x: *const Number,
-            new_x: Bool,
-            m: Index,
-            g: *const Number,
-            user_data: UserDataPtr) -> Bool {
+            _n: Index,
+            _x: *const Number,
+            _new_x: Bool,
+            _m: Index,
+            _g: *mut Number,
+            _user_data: UserDataPtr) -> Bool {
         1
     }
 
     extern fn g_jac(
-            n: Index,
-            x: *const Number,
-            new_x: Bool,
-            m: Index,
-            nele_jac: Index,
-            i_row: *mut Index,
-            j_col: *mut Index,
+            _n: Index,
+            _x: *const Number,
+            _new_x: Bool,
+            _m: Index,
+            _nele_jac: Index,
+            _i_row: *mut Index,
+            _j_col: *mut Index,
             values: *mut Number,
-            user_data: UserDataPtr) -> Bool {
-        if i_row != ptr::null_mut() && j_col != ptr::null_mut() {
+            _user_data: UserDataPtr) -> Bool {
+        if values == ptr::null_mut() {
             // set sparsity
         } else {
             // set values
@@ -209,20 +211,20 @@ mod tests {
     }
 
     extern fn l_hess(
-            n: Index,
-            x: *const Number,
-            new_x: Bool,
-            obj_factor: Number,
-            m: Index,
-            lambda: *const Number,
-            new_lambda: Bool,
-            nele_hess: Index,
+            _n: Index,
+            _x: *const Number,
+            _new_x: Bool,
+            _obj_factor: Number,
+            _m: Index,
+            _lambda: *const Number,
+            _new_lambda: Bool,
+            _nele_hess: Index,
             i_row: *mut Index,
             j_col: *mut Index,
             values: *mut Number,
-            user_data: UserDataPtr) -> Bool {
+            _user_data: UserDataPtr) -> Bool {
         unsafe {
-            if i_row != ptr::null_mut() && j_col != ptr::null_mut() {
+            if values == ptr::null_mut() {
                 *i_row = 0;
                 *j_col = 0;
                 // set sparsity
@@ -262,10 +264,10 @@ mod tests {
             let opt = CString::new("sb").unwrap();
             let opt_val = CString::new("yes").unwrap();
             AddIpoptStrOption(prob, opt.as_ptr(), opt_val.as_ptr());
-            let x = vec![0.5];
+            let mut x = vec![0.5];
             let mut obj_val = 0.0;
             let ret = IpoptSolve(prob,
-                                 x.as_ptr(),
+                                 x.as_mut_ptr(),
                                  ptr::null_mut(),
                                  &mut obj_val,
                                  ptr::null_mut(),

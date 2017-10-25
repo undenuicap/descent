@@ -3,6 +3,7 @@ use model::Model;
 use ipopt;
 use std::slice;
 use std::collections::HashMap;
+use std::ptr;
 
 struct Variable {
     id: usize,
@@ -89,8 +90,9 @@ impl HesSparsity {
 
 struct IpoptCBData<'a> {
     model: &'a IpoptModel,
-    j_sparsity: &'a Vec<Vec<ID>>,
-    h_sparsity: &'a HesSparsity,
+    j_sparsity: &'a Vec<(usize, ID)>, // jacobian sparsity
+    h_sparsity: &'a HesSparsity, // hessian sparsity
+    v_obj: &'a Vec<ID>, // variables in objective
 }
 
 impl Model for IpoptModel {
@@ -118,16 +120,14 @@ impl Model for IpoptModel {
     fn solve(&self) {
         let mut x_lb: Vec<f64> = Vec::new();
         let mut x_ub: Vec<f64> = Vec::new();
-        let mut g_lb: Vec<f64> = Vec::new();
-        let mut g_ub: Vec<f64> = Vec::new();
-        let mut nele_jac: usize = 0; // need to set
-        let mut nele_hes: usize = 0; // need to set
         for v in &self.vars {
             x_lb.push(v.lb);
             x_ub.push(v.ub);
         }
-        // Variable IDs for each constraint
-        let mut j_sparsity: Vec<Vec<ID>> = Vec::new();
+
+        let mut g_lb: Vec<f64> = Vec::new();
+        let mut g_ub: Vec<f64> = Vec::new();
+        let mut j_sparsity: Vec<(usize, ID)> = Vec::new();
         let mut h_sparsity = HesSparsity::new();
 
         for h in self.obj.expr.degree().higher {
@@ -138,46 +138,61 @@ impl Model for IpoptModel {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
             // Not sorted, but might not matter
-            let var_vec: Vec<ID> = c.expr.variables().into_iter().collect();
-            nele_jac += var_vec.len();
-            j_sparsity.push(var_vec);
+            for vid in c.expr.variables() {
+                j_sparsity.push((c.id, vid));
+            }
+            //let var_vec: Vec<ID> = c.expr.variables().into_iter().collect();
+            //j_sparsity.push(var_vec);
             for h in c.expr.degree().higher {
                 h_sparsity.add_con(h, c.id);
             }
         }
 
-        nele_hes = h_sparsity.n_ele();
+        let nele_hes = h_sparsity.n_ele();
+        let nele_jac = j_sparsity.len();
+        // Not sorted, don't suppose it matters
+        let v_obj: Vec<ID> = self.obj.expr.variables().into_iter().collect();
 
-        let cb_data = IpoptCBData {
+        let mut cb_data = IpoptCBData {
             model: &self,
             j_sparsity: &j_sparsity,
             h_sparsity: &h_sparsity,
+            v_obj: &v_obj,
         };
-        // All rest should be handled in callbacks
-        //let prob = CreateIpoptProblem(self.vars.len(),
-        //                              x_lb.as_ptr(),
-        //                              x_ub.as_ptr(),
-        //                              self.cons.len(),
-        //                              g_lb.as_ptr(),
-        //                              g_ub.as_ptr(),
-        //                              nele_jac,
-        //                              nele_hes,
-        //                              0, // C-style indexing
-        //                              f,
-        //                              g,
-        //                              f_grad,
-        //                              g_jac,
-        //                              l_hess);
-        //fn IpoptSolve(
-        //        ipopt_problem: IpoptProblem,
-        //        x: *const Number,
-        //        g: *mut Number,
-        //        obj_val: *mut Number,
-        //        mult_g: *const Number,
-        //        mult_x_L: *const Number,
-        //        mult_x_U: *const Number,
-        //        user_data: UserDataPtr) -> ApplicationReturnStatus;
-        //fn FreeIpoptProblem(ipopt_problem: IpoptProblem);
+        let prob = unsafe {
+            ipopt::CreateIpoptProblem(self.vars.len() as i32,
+                                      x_lb.as_ptr(),
+                                      x_ub.as_ptr(),
+                                      self.cons.len() as i32,
+                                      g_lb.as_ptr(),
+                                      g_ub.as_ptr(),
+                                      nele_jac as i32,
+                                      nele_hes as i32,
+                                      0, // C-style indexing
+                                      f,
+                                      g,
+                                      f_grad,
+                                      g_jac,
+                                      l_hess)
+        };
+        let mut x: Vec<f64> = Vec::new(); // will contain solution also
+        for v in &self.vars {
+            x.push(v.init);
+        }
+        let mut obj_val = 0.0;
+        let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
+        let status = unsafe {
+            ipopt::IpoptSolve(prob,
+                              x.as_mut_ptr(),
+                              ptr::null_mut(),
+                              &mut obj_val,
+                              ptr::null_mut(),
+                              ptr::null_mut(),
+                              ptr::null_mut(),
+                              cb_data_ptr);
+        };
+        //println!("Result: {}", x[0]);
+        unsafe { ipopt::FreeIpoptProblem(prob) };
     }
 }
 
@@ -196,26 +211,193 @@ impl<'a> Retrieve for Store<'a> {
     }
 }
 
-//#[allow(non_snake_case)]
 extern fn f(
         n: ipopt::Index,
         x: *const ipopt::Number,
-        new_x: ipopt::Bool,
+        _new_x: ipopt::Bool,
         obj_value: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-
     let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
 
     if n != cb_data.model.vars.len() as i32 {
-        return 0
+        return 0;
     }
 
     let store = Store {
         vars: unsafe { slice::from_raw_parts(x, n as usize) },
         pars: &cb_data.model.pars,
     };
-    unsafe {
-        *obj_value = cb_data.model.obj.expr.value(&store);
+
+    let value = unsafe { &mut *obj_value };
+    *value = cb_data.model.obj.expr.value(&store);
+    1
+}
+
+extern fn f_grad(
+        n: ipopt::Index,
+        x: *const ipopt::Number,
+        _new_x: ipopt::Bool,
+        grad_f: *mut ipopt::Number,
+        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+
+    if n != cb_data.model.vars.len() as i32 {
+        return 0;
+    }
+
+    let store = Store {
+        vars: unsafe { slice::from_raw_parts(x, n as usize) },
+        pars: &cb_data.model.pars,
+    };
+
+    let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
+    // Might need to zero out memory for other entries
+    for vid in cb_data.v_obj {
+        values[*vid] = cb_data.model.obj.expr.deriv(&store, *vid).1;
+    }
+    1
+}
+
+extern fn g(
+        n: ipopt::Index,
+        x: *const ipopt::Number,
+        _new_x: ipopt::Bool,
+        m: ipopt::Index,
+        g: *mut ipopt::Number,
+        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+
+    if n != cb_data.model.vars.len() as i32 {
+        return 0;
+    }
+    if m != cb_data.model.cons.len() as i32 {
+        return 0;
+    }
+
+    let store = Store {
+        vars: unsafe { slice::from_raw_parts(x, n as usize) },
+        pars: &cb_data.model.pars,
+    };
+
+    let values = unsafe { slice::from_raw_parts_mut(g, m as usize) };
+
+    for c in &cb_data.model.cons {
+        values[c.id] = c.expr.value(&store);
+    }
+    1
+}
+
+extern fn g_jac(
+        n: ipopt::Index,
+        x: *const ipopt::Number,
+        _new_x: ipopt::Bool,
+        m: ipopt::Index,
+        nele_jac: ipopt::Index,
+        i_row: *mut ipopt::Index,
+        j_col: *mut ipopt::Index,
+        vals: *mut ipopt::Number,
+        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+
+    if n != cb_data.model.vars.len() as i32 {
+        return 0;
+    }
+    if m != cb_data.model.cons.len() as i32 {
+        return 0;
+    }
+    if nele_jac != cb_data.j_sparsity.len() as i32 {
+        return 0;
+    }
+
+    if vals == ptr::null_mut() {
+        // Set sparsity
+        let row = unsafe {
+            slice::from_raw_parts_mut(i_row, nele_jac as usize)
+        };
+        let col = unsafe {
+            slice::from_raw_parts_mut(j_col, nele_jac as usize)
+        };
+        for (i, &(cid, vid)) in cb_data.j_sparsity.iter().enumerate() {
+            row[i] = cid as i32;
+            col[i] = vid as i32;
+        }
+    } else {
+        // Set values
+        let store = Store {
+            vars: unsafe { slice::from_raw_parts(x, n as usize) },
+            pars: &cb_data.model.pars,
+        };
+
+        let values = unsafe {
+            slice::from_raw_parts_mut(vals, nele_jac as usize)
+        };
+        for (i, &(cid, vid)) in cb_data.j_sparsity.iter().enumerate() {
+            values[i] = cb_data.model.cons[cid].expr.deriv(&store, vid).1;
+        }
+    }
+    1
+}
+
+extern fn l_hess(
+        n: ipopt::Index,
+        x: *const ipopt::Number,
+        _new_x: ipopt::Bool,
+        obj_factor: ipopt::Number,
+        m: ipopt::Index,
+        lambda: *const ipopt::Number,
+        _new_lambda: ipopt::Bool,
+        nele_hes: ipopt::Index,
+        i_row: *mut ipopt::Index,
+        j_col: *mut ipopt::Index,
+        vals: *mut ipopt::Number,
+        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+
+    if n != cb_data.model.vars.len() as i32 {
+        return 0;
+    }
+    if m != cb_data.model.cons.len() as i32 {
+        return 0;
+    }
+    if nele_hes != cb_data.h_sparsity.n_ele() as i32 {
+        return 0;
+    }
+
+    if vals == ptr::null_mut() {
+        // Set sparsity
+        let row = unsafe {
+            slice::from_raw_parts_mut(i_row, nele_hes as usize)
+        };
+        let col = unsafe {
+            slice::from_raw_parts_mut(j_col, nele_hes as usize)
+        };
+        for (vids, ent) in &cb_data.h_sparsity.sp {
+            row[ent.id] = vids.0 as i32;
+            col[ent.id] = vids.1 as i32;
+        }
+    } else {
+        // Set values
+        let store = Store {
+            vars: unsafe { slice::from_raw_parts(x, n as usize) },
+            pars: &cb_data.model.pars,
+        };
+
+        let lam = unsafe { slice::from_raw_parts(lambda, m as usize) };
+        let values = unsafe {
+            slice::from_raw_parts_mut(vals, nele_hes as usize)
+        };
+        for (vids, ent) in &cb_data.h_sparsity.sp {
+            let mut v = 0.0;
+            if ent.obj {
+                v += obj_factor*cb_data.model.obj.expr
+                    .deriv2(&store, vids.0, vids.1).3;
+            }
+            for cid in &ent.cons {
+                v += lam[*cid]*cb_data.model.cons[*cid].expr
+                    .deriv2(&store, vids.0, vids.1).3;
+            }
+            values[ent.id] = v;
+        }
     }
     1
 }
