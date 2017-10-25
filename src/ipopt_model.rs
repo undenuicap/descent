@@ -1,13 +1,19 @@
 use expression::{Expr, Evaluate, Retrieve, ID};
-use model::{Model, VarType};
+use model::Model;
 use ipopt;
 use std::slice;
+use std::collections::HashMap;
 
 struct Variable {
     id: usize,
     lb: f64,
     ub: f64,
     init: f64,
+}
+
+struct Parameter {
+    id: usize,
+    val: f64,
 }
 
 struct Constraint {
@@ -17,20 +23,74 @@ struct Constraint {
     ub: f64,
 }
 
+struct Objective {
+    expr: Expr,
+}
+
 struct IpoptModel {
     vars: Vec<Variable>,
+    pars: Vec<Parameter>,
     cons: Vec<Constraint>,
-    obj: Expr,
+    obj: Objective,
 }
 
 impl IpoptModel {
     fn new() -> IpoptModel {
         IpoptModel {
             vars: Vec::new(),
+            pars: Vec::new(),
             cons: Vec::new(),
-            obj: Expr::Integer(0),
+            obj: Objective { expr: Expr::Integer(0) },
         }
     }
+}
+
+struct HesEntry {
+    id: usize, // index into sparse matrix
+    obj: bool, // whether objective participates in entry
+    cons: Vec<usize>, // constraints that participate in entry
+}
+
+struct HesSparsity {
+    sp: HashMap<(ID, ID), HesEntry>,
+}
+
+impl HesSparsity {
+    fn new() -> HesSparsity {
+        HesSparsity { sp: HashMap::new() }
+    }
+
+    fn get_entry(&mut self, eid: (ID, ID)) -> &mut HesEntry {
+        if !self.sp.contains_key(&eid) {
+            let id = self.sp.len();
+            self.sp.insert(eid, HesEntry { 
+                id: id,
+                obj: false,
+                cons: Vec::new(),
+            });
+        }
+        self.sp.get_mut(&eid).unwrap()
+    }
+
+    fn add_con(&mut self, eid: (ID, ID), cid: usize) {
+        let ent = self.get_entry(eid);
+        ent.cons.push(cid);
+    }
+
+    fn add_obj(&mut self, eid: (ID, ID)) {
+        let ent = self.get_entry(eid);
+        ent.obj = true;
+    }
+
+    fn n_ele(&self) -> usize {
+        self.sp.len()
+    }
+}
+
+struct IpoptCBData<'a> {
+    model: &'a IpoptModel,
+    j_sparsity: &'a Vec<Vec<ID>>,
+    h_sparsity: &'a HesSparsity,
 }
 
 impl Model for IpoptModel {
@@ -45,8 +105,14 @@ impl Model for IpoptModel {
         self.cons.push(Constraint { id: id, expr: expr, lb: lb, ub: ub });
     }
 
+    fn add_par(&mut self, val: f64) -> Expr {
+        let id = self.pars.len();
+        self.pars.push(Parameter { id: id, val: val });
+        Expr::Parameter(id)
+    }
+
     fn set_obj(&mut self, expr: Expr) {
-        self.obj = expr;
+        self.obj = Objective { expr: expr };
     }
 
     fn solve(&self) {
@@ -55,29 +121,38 @@ impl Model for IpoptModel {
         let mut g_lb: Vec<f64> = Vec::new();
         let mut g_ub: Vec<f64> = Vec::new();
         let mut nele_jac: usize = 0; // need to set
-        let mut nele_hess: usize = 0; // need to set
+        let mut nele_hes: usize = 0; // need to set
         for v in &self.vars {
             x_lb.push(v.lb);
             x_ub.push(v.ub);
         }
-        // Probably store ordered variables for each constraint
-        // Store mapping between higher order pairs to vector of relevant
-        // constraints
-        // Could assume obj needs to be called on each mapped pair (vector is
-        // empty if just objective)
-        {
-            let obj_deg = self.obj.degree();
-            nele_hess += obj_deg.higher.len();
-            for c in &self.cons {
-                g_lb.push(c.lb);
-                g_ub.push(c.ub);
-                nele_jac += c.expr.variables().len();
-                // Think should hen subtract obj entries from each constraint
-                // This might be easier once work out what doing with maps
-                //nele_hess += c.expr.degree().add(&obj_deg).higher.len();
-                nele_hess += c.expr.degree().higher.len();
+        // Variable IDs for each constraint
+        let mut j_sparsity: Vec<Vec<ID>> = Vec::new();
+        let mut h_sparsity = HesSparsity::new();
+
+        for h in self.obj.expr.degree().higher {
+            h_sparsity.add_obj(h);
+        }
+
+        for c in &self.cons {
+            g_lb.push(c.lb);
+            g_ub.push(c.ub);
+            // Not sorted, but might not matter
+            let var_vec: Vec<ID> = c.expr.variables().into_iter().collect();
+            nele_jac += var_vec.len();
+            j_sparsity.push(var_vec);
+            for h in c.expr.degree().higher {
+                h_sparsity.add_con(h, c.id);
             }
         }
+
+        nele_hes = h_sparsity.n_ele();
+
+        let cb_data = IpoptCBData {
+            model: &self,
+            j_sparsity: &j_sparsity,
+            h_sparsity: &h_sparsity,
+        };
         // All rest should be handled in callbacks
         //let prob = CreateIpoptProblem(self.vars.len(),
         //                              x_lb.as_ptr(),
@@ -86,19 +161,29 @@ impl Model for IpoptModel {
         //                              g_lb.as_ptr(),
         //                              g_ub.as_ptr(),
         //                              nele_jac,
-        //                              nele_hess,
+        //                              nele_hes,
         //                              0, // C-style indexing
         //                              f,
         //                              g,
         //                              f_grad,
         //                              g_jac,
         //                              l_hess);
+        //fn IpoptSolve(
+        //        ipopt_problem: IpoptProblem,
+        //        x: *const Number,
+        //        g: *mut Number,
+        //        obj_val: *mut Number,
+        //        mult_g: *const Number,
+        //        mult_x_L: *const Number,
+        //        mult_x_U: *const Number,
+        //        user_data: UserDataPtr) -> ApplicationReturnStatus;
+        //fn FreeIpoptProblem(ipopt_problem: IpoptProblem);
     }
 }
 
 struct Store<'a> {
     vars: &'a [ipopt::Number],
-    pars: &'a Vec<f64>,
+    pars: &'a Vec<Parameter>,
 }
 
 impl<'a> Retrieve for Store<'a> {
@@ -107,11 +192,11 @@ impl<'a> Retrieve for Store<'a> {
     }
 
     fn get_par(&self, pid: ID) -> f64 {
-        self.pars[pid]
+        self.pars[pid].val
     }
 }
 
-#[allow(non_snake_case)]
+//#[allow(non_snake_case)]
 extern fn f(
         n: ipopt::Index,
         x: *const ipopt::Number,
@@ -119,16 +204,18 @@ extern fn f(
         obj_value: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
 
-    let model: &IpoptModel = unsafe { &*(user_data as *const IpoptModel) };
+    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
 
-    let pars: Vec<f64> = Vec::new(); // temporary, should link to model pars
-    // should check n is what we expect, maybe panic if not
+    if n != cb_data.model.vars.len() as i32 {
+        return 0
+    }
+
     let store = Store {
         vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: &pars,
+        pars: &cb_data.model.pars,
     };
     unsafe {
-        *obj_value = model.obj.value(&store);
+        *obj_value = cb_data.model.obj.expr.value(&store);
     }
     1
 }
