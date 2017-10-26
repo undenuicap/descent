@@ -1,10 +1,11 @@
 use expression::{Expr, Evaluate, Retrieve, ID};
-use model::Model;
+use model::{Model, Solution, SolutionStatus};
 use ipopt;
 use std::slice;
 use std::collections::HashMap;
 use std::ptr;
 use std::ffi::CString;
+use std::f64;
 
 struct Variable {
     id: usize,
@@ -185,9 +186,70 @@ impl IpoptModel {
     }
 
     // As it uses options above, will only last as long as model stays prepared
-    fn silence(&mut self) -> {
+    fn silence(&mut self) -> bool {
         self.set_str_option("sb", "yes")
             && self.set_int_option("print_level", 0)
+    }
+
+    fn form_init_solution(&self, sol: &mut Solution) {
+        // If no missing initial values, pull from variable
+        let nvar_store = sol.store.vars.len();
+        sol.store.vars.extend(self.model.vars.iter()
+                              .skip(nvar_store)
+                              .map(|x| x.init));
+        sol.store.vars.resize(self.model.vars.len(), 0.0); // if need to shrink
+        // Always redo parameters
+        sol.store.pars.clear();
+        for p in &self.model.pars {
+            sol.store.pars.push(p.val);
+        }
+        // Buffer rest with zeros
+        sol.con_mult.resize(self.model.cons.len(), 0.0);
+        sol.var_lb_mult.resize(self.model.vars.len(), 0.0);
+        sol.var_ub_mult.resize(self.model.vars.len(), 0.0);
+    }
+
+    // Should only be called after prepare
+    fn ipopt_solve(&mut self, mut sol: Solution) ->
+            (SolutionStatus, Option<Solution>) {
+        if let (&Some(ref cache), &Some(ref prob)) = (&self.cache, &self.prob) {
+            self.form_init_solution(&mut sol);
+            let ipopt_status;
+            {
+                let mut cb_data = IpoptCBData {
+                    model: &self.model,
+                    cache: cache,
+                    pars: &sol.store.pars,
+                };
+                let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
+                ipopt_status = unsafe {
+                    ipopt::IpoptSolve(prob.prob,
+                                      sol.store.vars.as_mut_ptr(),
+                                      ptr::null_mut(), // can calc ourselves
+                                      &mut sol.obj_val,
+                                      sol.con_mult.as_mut_ptr(),
+                                      sol.var_lb_mult.as_mut_ptr(),
+                                      sol.var_ub_mult.as_mut_ptr(),
+                                      cb_data_ptr)
+                };
+            }
+            // Should probably save ipopt_status to self
+            use ipopt::ApplicationReturnStatus as ARS;
+            use model::SolutionStatus as SS;
+            let status = match ipopt_status {
+                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel =>
+                    SS::Solved,
+                ARS::InfeasibleProblemDetected => SS::Infeasible,
+                _ => SS::Other,
+            };
+            match ipopt_status {
+                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel =>
+                    (status, Some(sol)),
+                _ => (status, None),
+            }
+        } else {
+            (SolutionStatus::Error, None)
+        }
     }
 }
 
@@ -236,6 +298,7 @@ impl HesSparsity {
 struct IpoptCBData<'a> {
     model: &'a ModelData,
     cache: &'a ModelCache,
+    pars: &'a Vec<f64>,
 }
 
 impl Model for IpoptModel {
@@ -246,10 +309,11 @@ impl Model for IpoptModel {
         Expr::Variable(id)
     }
 
-    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) {
+    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize {
         self.prepared = false;
         let id = self.model.cons.len();
         self.model.cons.push(Constraint { id: id, expr: expr, lb: lb, ub: ub });
+        id
     }
 
     fn add_par(&mut self, val: f64) -> Expr {
@@ -264,37 +328,23 @@ impl Model for IpoptModel {
         self.model.obj = Objective { expr: expr };
     }
 
-    fn solve(&mut self) {
+    fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
-        if let (&Some(ref cache), &Some(ref prob)) = (&self.cache, &self.prob) {
-            let mut x: Vec<f64> = Vec::new(); // will contain solution also
-            for v in &self.model.vars {
-                x.push(v.init);
-            }
-            let mut obj_val = 0.0;
-            let mut cb_data = IpoptCBData {
-                model: &self.model, cache: cache
-            };
-            let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
-            let status = unsafe {
-                ipopt::IpoptSolve(prob.prob,
-                                  x.as_mut_ptr(),
-                                  ptr::null_mut(),
-                                  &mut obj_val,
-                                  ptr::null_mut(),
-                                  ptr::null_mut(),
-                                  ptr::null_mut(),
-                                  cb_data_ptr);
-            };
-            println!("Result: {}", x[0]);
-        } else {
-        }
+        let sol = Solution::new();
+        self.ipopt_solve(sol)
+    }
+
+    fn warm_solve(&mut self, sol: Solution) ->
+            (SolutionStatus, Option<Solution>) {
+        self.prepare();
+        // Should set up warm start stuff
+        self.ipopt_solve(sol)
     }
 }
 
 struct Store<'a> {
     vars: &'a [ipopt::Number],
-    pars: &'a Vec<Parameter>,
+    pars: &'a Vec<f64>,
 }
 
 impl<'a> Retrieve for Store<'a> {
@@ -303,7 +353,7 @@ impl<'a> Retrieve for Store<'a> {
     }
 
     fn get_par(&self, pid: ID) -> f64 {
-        self.pars[pid].val
+        self.pars[pid]
     }
 }
 
@@ -321,7 +371,7 @@ extern fn f(
 
     let store = Store {
         vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: &cb_data.model.pars,
+        pars: cb_data.pars,
     };
 
     let value = unsafe { &mut *obj_value };
@@ -343,7 +393,7 @@ extern fn f_grad(
 
     let store = Store {
         vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: &cb_data.model.pars,
+        pars: cb_data.pars,
     };
 
     let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
@@ -372,7 +422,7 @@ extern fn g(
 
     let store = Store {
         vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: &cb_data.model.pars,
+        pars: cb_data.pars,
     };
 
     let values = unsafe { slice::from_raw_parts_mut(g, m as usize) };
@@ -421,7 +471,7 @@ extern fn g_jac(
         // Set values
         let store = Store {
             vars: unsafe { slice::from_raw_parts(x, n as usize) },
-            pars: &cb_data.model.pars,
+            pars: cb_data.pars,
         };
 
         let values = unsafe {
@@ -475,7 +525,7 @@ extern fn l_hess(
         // Set values
         let store = Store {
             vars: unsafe { slice::from_raw_parts(x, n as usize) },
-            pars: &cb_data.model.pars,
+            pars: cb_data.pars,
         };
 
         let lam = unsafe { slice::from_raw_parts(lambda, m as usize) };
@@ -502,12 +552,89 @@ extern fn l_hess(
 mod tests {
     use super::*;
     #[test]
-    fn easy_problem() {
+    fn univar_problem() {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0);
         m.set_obj(&x*&x);
         assert!(m.set_str_option("sb", "yes"));
         assert!(m.set_int_option("print_level", 0));
-        m.solve();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+            assert!((s.obj_val - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn multivar_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0);
+        let y = m.add_var(-1.0, 1.0);
+        m.set_obj(&x*&x + &y*&y + &x*&y);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+            assert!((s.value(&y) + 0.5).abs() < 1e-6);
+            assert!((s.obj_val - 0.75).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn equality_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0);
+        let y = m.add_var(-1.0, 1.0);
+        m.set_obj(&x*&x + &y*&y + &x*&y);
+        m.add_con(&x + &y, 0.75, 0.75);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+            assert!((s.value(&y) + 0.25).abs() < 1e-6);
+            assert!((s.obj_val - 0.8125).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn inequality_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0);
+        let y = m.add_var(-1.0, 1.0);
+        m.set_obj(&x*&x + &y*&y + &x*&y);
+        m.add_con(&x + &y, 0.25, 0.40);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+            assert!((s.value(&y) + 0.6).abs() < 1e-6);
+            assert!((s.obj_val - 0.76).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn quad_constraint_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(-10.0, 10.0);
+        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY);
+        m.set_obj(2*&y);
+        m.add_con(&y - &x*&x + &x, 0.0, f64::INFINITY);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.value(&x) - 0.5).abs() < 1e-6);
+            assert!((s.value(&y) + 0.25).abs() < 1e-6);
+            assert!((s.obj_val + 0.5).abs() < 1e-6);
+        }
     }
 }

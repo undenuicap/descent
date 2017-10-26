@@ -458,6 +458,22 @@ impl std::ops::Add<Expr> for Expr {
     }
 }
 
+impl std::ops::Sub<Expr> for Expr {
+    type Output = Expr;
+
+    fn sub(self, other: Expr) -> Expr {
+        match self {
+            Expr::Add(mut es) => {
+                es.push(-other);
+                Expr::Add(es)
+            },
+            _ => {
+                Expr::Add(vec![self, -other])
+            },
+        }
+    }
+}
+
 impl std::ops::Mul<Expr> for Expr {
     type Output = Expr;
 
@@ -529,24 +545,27 @@ impl<'a> std::ops::Neg for &'a Expr {
 }
 
 binary_ops_g3!(Add, add, Expr, Expr, Expr);
+binary_ops_g3!(Sub, sub, Expr, Expr, Expr);
 binary_ops_g3!(Mul, mul, Expr, Expr, Expr);
 binary_ops_g3!(Div, div, Expr, Expr, Expr);
 
 binary_ops_cast_g4!(Add, add, Expr, i32, Expr, Expr::Integer);
+binary_ops_cast_g4!(Sub, sub, Expr, i32, Expr, Expr::Integer);
 binary_ops_cast_g4!(Mul, mul, Expr, i32, Expr, Expr::Integer);
 binary_ops_cast_g4!(Div, div, Expr, i32, Expr, Expr::Integer);
 
 binary_ops_cast_g4!(Add, add, Expr, f64, Expr, Expr::Float);
+binary_ops_cast_g4!(Sub, sub, Expr, f64, Expr, Expr::Float);
 binary_ops_cast_g4!(Mul, mul, Expr, f64, Expr, Expr::Float);
 binary_ops_cast_g4!(Div, div, Expr, f64, Expr, Expr::Float);
 
-struct Store {
-    vars: Vec<f64>,
-    pars: Vec<f64>,
+pub struct Store {
+    pub vars: Vec<f64>,
+    pub pars: Vec<f64>,
 }
 
 impl Store {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Store { vars: Vec::new(), pars: Vec::new() }
     }
 }
@@ -589,6 +608,22 @@ mod tests {
 
         assert_eq!((&v + &p + 5.0).value(&store), 14.0);
         assert_eq!((3.0 + &v + &p + 5.0).value(&store), 17.0);
+    }
+
+    #[test]
+    fn subtraction() {
+        use expression::Expr::*;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
+
+        let v = Variable(0);
+        let p = Parameter(0);
+
+        assert_eq!((&v - &p).value(&store), 1.0);
+
+        assert_eq!((&v + &p - 5).value(&store), 4.0);
+        assert_eq!((3 - &v - &p - 5).value(&store), -11.0);
     }
 
     #[test]
