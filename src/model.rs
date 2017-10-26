@@ -11,7 +11,7 @@ pub trait Model {
     fn add_par(&mut self, val: f64) -> Expr;
     fn add_con(&mut self, expr: Expr, lb: f64, ub: f64);
     fn set_obj(&mut self, expr: Expr);
-    fn solve(&self);
+    fn solve(&mut self);
 }
 
 pub trait MIModel {
