@@ -8,19 +8,16 @@ use std::ffi::CString;
 use std::f64;
 
 struct Variable {
-    id: usize,
     lb: f64,
     ub: f64,
     init: f64,
 }
 
 struct Parameter {
-    id: usize,
     val: f64,
 }
 
 struct Constraint {
-    id: usize,
     expr: Expr,
     lb: f64,
     ub: f64,
@@ -97,17 +94,17 @@ impl IpoptModel {
             h_sparsity.add_obj(h);
         }
 
-        for c in &self.model.cons {
+        for (cid, c) in self.model.cons.iter().enumerate() {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
             // Not sorted, but might not matter
             for vid in c.expr.variables() {
-                j_sparsity.push((c.id, vid));
+                j_sparsity.push((cid, vid));
             }
             //let var_vec: Vec<ID> = c.expr.variables().into_iter().collect();
             //j_sparsity.push(var_vec);
             for h in c.expr.degree().higher {
-                h_sparsity.add_con(h, c.id);
+                h_sparsity.add_con(h, cid);
             }
         }
 
@@ -269,15 +266,22 @@ impl HesSparsity {
     }
 
     fn get_entry(&mut self, eid: (ID, ID)) -> &mut HesEntry {
-        if !self.sp.contains_key(&eid) {
-            let id = self.sp.len();
-            self.sp.insert(eid, HesEntry { 
-                id: id,
-                obj: false,
-                cons: Vec::new(),
-            });
-        }
-        self.sp.get_mut(&eid).unwrap()
+        let id = self.sp.len(); // incase need to create new
+        self.sp.entry(eid).or_insert_with(||
+                                           HesEntry { 
+                                               id: id,
+                                               obj: false,
+                                               cons: Vec::new(),
+                                           })
+        //if !self.sp.contains_key(&eid) {
+        //    let id = self.sp.len();
+        //    self.sp.insert(eid, HesEntry { 
+        //        id: id,
+        //        obj: false,
+        //        cons: Vec::new(),
+        //    });
+        //}
+        //self.sp.get_mut(&eid).unwrap()
     }
 
     fn add_con(&mut self, eid: (ID, ID), cid: usize) {
@@ -305,22 +309,22 @@ impl Model for IpoptModel {
     fn add_var(&mut self, lb: f64, ub: f64) -> Expr {
         self.prepared = false;
         let id = self.model.vars.len();
-        self.model.vars.push(Variable { id: id, lb: lb, ub: ub, init: 0.0 });
+        self.model.vars.push(Variable { lb: lb, ub: ub, init: 0.0 });
         Expr::Variable(id)
-    }
-
-    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize {
-        self.prepared = false;
-        let id = self.model.cons.len();
-        self.model.cons.push(Constraint { id: id, expr: expr, lb: lb, ub: ub });
-        id
     }
 
     fn add_par(&mut self, val: f64) -> Expr {
         self.prepared = false;
         let id = self.model.pars.len();
-        self.model.pars.push(Parameter { id: id, val: val });
+        self.model.pars.push(Parameter { val: val });
         Expr::Parameter(id)
+    }
+
+    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize {
+        self.prepared = false;
+        let id = self.model.cons.len();
+        self.model.cons.push(Constraint { expr: expr, lb: lb, ub: ub });
+        id
     }
 
     fn set_obj(&mut self, expr: Expr) {
@@ -427,8 +431,8 @@ extern fn g(
 
     let values = unsafe { slice::from_raw_parts_mut(g, m as usize) };
 
-    for c in &cb_data.model.cons {
-        values[c.id] = c.expr.value(&store);
+    for (cid, c) in cb_data.model.cons.iter().enumerate() {
+        values[cid] = c.expr.value(&store);
     }
     1
 }
@@ -455,7 +459,7 @@ extern fn g_jac(
         return 0;
     }
 
-    if vals == ptr::null_mut() {
+    if vals.is_null() {
         // Set sparsity
         let row = unsafe {
             slice::from_raw_parts_mut(i_row, nele_jac as usize)
@@ -509,7 +513,7 @@ extern fn l_hess(
         return 0;
     }
 
-    if vals == ptr::null_mut() {
+    if vals.is_null() {
         // Set sparsity
         let row = unsafe {
             slice::from_raw_parts_mut(i_row, nele_hes as usize)

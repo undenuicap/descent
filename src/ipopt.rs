@@ -1,8 +1,6 @@
 extern crate libc;
 
-use std::ptr;
 use std::os::raw::c_char;
-use std::ffi::CString;
 use self::libc::c_void;
 
 pub type Number = f64;
@@ -92,19 +90,19 @@ type EvalHCB = extern fn(
         values: *mut Number,
         user_data: UserDataPtr) -> Bool;
 
-type IntermediateCB = extern fn(
-        alg_mod: Index,
-        iter_count: Index,
-        obj_value: Number,
-        inf_pr: Number,
-        inf_du: Number,
-        mu: Number,
-        d_norm: Number,
-        regularization_size: Number,
-        alpha_du: Number,
-        alpha_pr: Number,
-        ls_trials: Number,
-        user_data: UserDataPtr) -> Bool;
+//type IntermediateCB = extern fn(
+//        alg_mod: Index,
+//        iter_count: Index,
+//        obj_value: Number,
+//        inf_pr: Number,
+//        inf_du: Number,
+//        mu: Number,
+//        d_norm: Number,
+//        regularization_size: Number,
+//        alpha_du: Number,
+//        alpha_pr: Number,
+//        ls_trials: Number,
+//        user_data: UserDataPtr) -> Bool;
 
 #[link(name = "ipopt")]
 extern {
@@ -153,6 +151,8 @@ extern {
 
 #[cfg(test)]
 mod tests {
+    use std::ptr;
+    use std::ffi::CString;
     use super::*;
 
     #[allow(non_snake_case)]

@@ -52,7 +52,7 @@ fn order(a: ID, b: ID) -> (ID, ID) {
     if a > b { (b, a) } else { (a, b) }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct Degree {
     pub linear: HashSet<ID>,
     //quadratic: HashSet<(ID, ID)>,
@@ -61,11 +61,7 @@ pub struct Degree {
 
 impl Degree {
     pub fn new() -> Degree {
-        Degree {
-            linear: HashSet::new(),
-            //quadratic: HashSet::new(),
-            higher: HashSet::new(),
-        }
+        Degree::default()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -136,10 +132,8 @@ impl Expr {
         use expression::Expr::*;
         f(self);
         match *self {
-            Add(ref es) => for e in es { e.visit_top(f); },
-            Mul(ref es) => for e in es { e.visit_top(f); },
-            Neg(ref e) => e.visit_top(f),
-            Pow(ref e, _) => e.visit_top(f),
+            Add(ref es) | Mul(ref es) => for e in es { e.visit_top(f); },
+            Neg(ref e) | Pow(ref e, _) => e.visit_top(f),
             _ => (),
         };
     }
@@ -147,10 +141,8 @@ impl Expr {
     pub fn visit_bot(&self, f: &mut FnMut(&Expr) -> ()) {
         use expression::Expr::*;
         match *self {
-            Add(ref es) => for e in es { e.visit_bot(f); },
-            Mul(ref es) => for e in es { e.visit_bot(f); },
-            Neg(ref e) => e.visit_bot(f),
-            Pow(ref e, _) => e.visit_bot(f),
+            Add(ref es) | Mul(ref es)  => for e in es { e.visit_bot(f); },
+            Neg(ref e) | Pow(ref e, _) => e.visit_bot(f),
             _ => (),
         };
         f(self);
@@ -191,9 +183,7 @@ impl Expr {
                 d.linear.insert(id);
                 d
             },
-            Parameter(_) => Degree::new(),
-            Float(_) => Degree::new(),
-            Integer(_) => Degree::new(),
+            _ => Degree::new(),
         }
     }
 }
@@ -209,7 +199,7 @@ impl Evaluate for Expr {
             Variable(id) => ret.get_var(id),
             Parameter(id) => ret.get_par(id),
             Float(v) => v,
-            Integer(v) => v as f64,
+            Integer(v) => f64::from(v),
         }
     }
 
@@ -235,14 +225,14 @@ impl Evaluate for Expr {
                 match p {
                     0 => (1.0, 0.0),
                     1 => r,
-                    _ => (r.0.powi(p), (p as f64)*r.0.powi(p - 1)*r.1),
+                    _ => (r.0.powi(p), f64::from(p)*r.0.powi(p - 1)*r.1),
                 }
             },
             Variable(id) =>
                 (ret.get_var(id), if id == x { 1.0 } else { 0.0 }),
             Parameter(id) => (ret.get_par(id), 0.0),
             Float(v) => (v, 0.0),
-            Integer(v) => (v as f64, 0.0),
+            Integer(v) => (f64::from(v), 0.0),
         }
     }
 
@@ -272,8 +262,9 @@ impl Evaluate for Expr {
                     _ => {
                         let fl = r.0.powi(p - 1);
                         let fll = r.0.powi(p - 2);
-                        (r.0.powi(p), (p as f64)*fl*r.1, (p as f64)*fl*r.2,
-                            ((p*p  - p) as f64)*fll*r.1*r.2 + (p as f64)*fl*r.3)
+                        (r.0.powi(p), f64::from(p)*fl*r.1, f64::from(p)*fl*r.2,
+                            f64::from(p*p  - p)*fll*r.1*r.2
+                            + f64::from(p)*fl*r.3)
                     },
                 }
             },
@@ -284,7 +275,7 @@ impl Evaluate for Expr {
                     0.0),
             Parameter(id) => (ret.get_par(id), 0.0, 0.0, 0.0),
             Float(v) => (v, 0.0, 0.0, 0.0),
-            Integer(v) => (v as f64, 0.0, 0.0, 0.0),
+            Integer(v) => (f64::from(v), 0.0, 0.0, 0.0),
         }
     }
 }

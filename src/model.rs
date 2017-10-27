@@ -1,10 +1,10 @@
-use expression::{Expr, Evaluate, Retrieve, Store};
+use expression::{Expr, Evaluate, Store};
 
-pub enum VarType {
-    Continuous,
-    Integer,
-    Binary,
-}
+//pub enum VarType {
+//    Continuous,
+//    Integer,
+//    Binary,
+//}
 
 pub trait Model {
     fn add_var(&mut self, lb: f64, ub: f64) -> Expr;
@@ -12,7 +12,7 @@ pub trait Model {
     fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize;
     fn set_obj(&mut self, expr: Expr);
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>);
-    fn warm_solve(&mut self, mut sol: Solution) ->
+    fn warm_solve(&mut self, sol: Solution) ->
         (SolutionStatus, Option<Solution>);
 }
 
@@ -57,7 +57,7 @@ impl Solution {
     }
     
     pub fn var_lb_mult(&self, expr: &Expr) -> Option<f64> {
-        if let &Expr::Variable(vid) = expr {
+        if let Expr::Variable(vid) = *expr {
             Some(self.var_lb_mult[vid])
         } else {
             None
@@ -65,7 +65,7 @@ impl Solution {
     }
     
     pub fn var_ub_mult(&self, expr: &Expr) -> Option<f64> {
-        if let &Expr::Variable(vid) = expr {
+        if let Expr::Variable(vid) = *expr {
             Some(self.var_ub_mult[vid])
         } else {
             None
