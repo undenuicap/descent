@@ -1,8 +1,11 @@
+extern crate fnv;
+
 use expression::{Expr, Evaluate, Retrieve, ID};
 use model::{Model, Solution, SolutionStatus};
 use ipopt;
 use std::slice;
-use std::collections::HashMap;
+//use std::collections::HashMap;
+use self::fnv::FnvHashMap;
 use std::ptr;
 use std::ffi::CString;
 use std::f64;
@@ -257,12 +260,12 @@ struct HesEntry {
 }
 
 struct HesSparsity {
-    sp: HashMap<(ID, ID), HesEntry>,
+    sp: FnvHashMap<(ID, ID), HesEntry>,
 }
 
 impl HesSparsity {
     fn new() -> HesSparsity {
-        HesSparsity { sp: HashMap::new() }
+        HesSparsity { sp: FnvHashMap::default() }
     }
 
     fn get_entry(&mut self, eid: (ID, ID)) -> &mut HesEntry {
@@ -662,7 +665,7 @@ mod tests {
             m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
                       *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
         }
-        m.silence();
+        //m.silence();
         let (stat, sol) = m.solve();
         assert_eq!(stat, SolutionStatus::Solved);
         assert!(sol.is_some());
