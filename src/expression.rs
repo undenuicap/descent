@@ -24,6 +24,8 @@ pub enum Expr {
     Mul(Vec<Expr>),
     Neg(Box<Expr>), // negate
     Pow(Box<Expr>, i32),
+    Sin(Box<Expr>),
+    Cos(Box<Expr>),
     Variable(ID),
     Parameter(ID),
     Float(f64),
@@ -31,20 +33,37 @@ pub enum Expr {
 }
 
 // Have to use trait because straight fn overloading not possible
-trait RaiseTo {
+pub trait NumOps {
     fn powi(self, p: i32) -> Expr;
+    fn sin(self) -> Expr;
+    fn cos(self) -> Expr;
 }
 
-
-impl RaiseTo for Expr {
+impl NumOps for Expr {
     fn powi(self, p: i32) -> Expr {
         Expr::Pow(Box::new(self), p)
     }
+
+    fn sin(self) -> Expr {
+        Expr::Sin(Box::new(self))
+    }
+
+    fn cos(self) -> Expr {
+        Expr::Cos(Box::new(self))
+    }
 }
 
-impl<'a> RaiseTo for &'a Expr {
+impl<'a> NumOps for &'a Expr {
     fn powi(self, p: i32) -> Expr {
         Expr::Pow(Box::new(self.clone()), p)
+    }
+
+    fn sin(self) -> Expr {
+        Expr::Sin(Box::new(self.clone()))
+    }
+
+    fn cos(self) -> Expr {
+        Expr::Cos(Box::new(self.clone()))
     }
 }
 
@@ -133,7 +152,8 @@ impl Expr {
         f(self);
         match *self {
             Add(ref es) | Mul(ref es) => for e in es { e.visit_top(f); },
-            Neg(ref e) | Pow(ref e, _) => e.visit_top(f),
+            Neg(ref e) | Pow(ref e, _) | Sin(ref e) | Cos(ref e) =>
+                e.visit_top(f),
             _ => (),
         };
     }
@@ -142,7 +162,8 @@ impl Expr {
         use expression::Expr::*;
         match *self {
             Add(ref es) | Mul(ref es)  => for e in es { e.visit_bot(f); },
-            Neg(ref e) | Pow(ref e, _) => e.visit_bot(f),
+            Neg(ref e) | Pow(ref e, _) | Sin(ref e) | Cos(ref e) =>
+                e.visit_bot(f),
             _ => (),
         };
         f(self);
@@ -178,6 +199,10 @@ impl Expr {
                     _ => d.mul(&d),
                 }
             },
+            Sin(ref e) | Cos(ref e) => {
+                let d = e.degree();
+                d.mul(&d)
+            },
             Variable(id) => {
                 let mut d = Degree::new();
                 d.linear.insert(id);
@@ -196,6 +221,8 @@ impl Evaluate for Expr {
             Mul(ref es) => es.iter().fold(1.0, |a, e| { a*e.value(ret) }),
             Neg(ref e) => -e.value(ret),
             Pow(ref e, p) => e.value(ret).powi(p),
+            Sin(ref e) => e.value(ret).sin(),
+            Cos(ref e) => e.value(ret).cos(),
             Variable(id) => ret.get_var(id),
             Parameter(id) => ret.get_par(id),
             Float(v) => v,
@@ -227,6 +254,14 @@ impl Evaluate for Expr {
                     1 => r,
                     _ => (r.0.powi(p), f64::from(p)*r.0.powi(p - 1)*r.1),
                 }
+            },
+            Sin(ref e) => {
+                let r = e.deriv(ret, x);
+                (r.0.sin(), r.0.cos()*r.1)
+            },
+            Cos(ref e) => {
+                let r = e.deriv(ret, x);
+                (r.0.cos(), -r.0.sin()*r.1)
             },
             Variable(id) =>
                 (ret.get_var(id), if id == x { 1.0 } else { 0.0 }),
@@ -267,6 +302,16 @@ impl Evaluate for Expr {
                             + f64::from(p)*fl*r.3)
                     },
                 }
+            },
+            Sin(ref e) => {
+                let r = e.deriv2(ret, x, y);
+                (r.0.sin(), r.0.cos()*r.1, r.0.cos()*r.2,
+                    -r.1*r.2*r.0.sin() + r.0.cos()*r.3)
+            },
+            Cos(ref e) => {
+                let r = e.deriv2(ret, x, y);
+                (r.0.cos(), -r.0.sin()*r.1, -r.0.sin()*r.2,
+                    -r.1*r.2*r.0.cos() - r.0.sin()*r.3)
             },
             Variable(id) =>
                 (ret.get_var(id),
@@ -683,6 +728,32 @@ mod tests {
 
         assert_eq!((2*Variable(0).powi(2)).deriv2(
                 &store, 0_usize, 0_usize), (50.0, 20.0, 20.0, 4.0));
+    }
+
+    #[test]
+    fn trig() {
+        use expression::Expr::*;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.vars.push(3.0);
+
+        use std::f64::consts::PI;
+        assert_eq!((Variable(0)*PI/180.0).cos().value(&store),
+            5.0_f64.to_radians().cos());
+        assert_eq!((Variable(1)*PI/180.0).sin().value(&store),
+            3.0_f64.to_radians().sin());
+        assert_eq!((Variable(0)*PI/180.0).cos().deriv(&store, 0_usize),
+            (5.0_f64.to_radians().cos(),
+            -(PI/180.0)*5.0_f64.to_radians().sin()));
+        assert_eq!((Variable(0)*PI/180.0).sin().deriv(&store, 0_usize),
+            (5.0_f64.to_radians().sin(),
+            (PI/180.0)*5.0_f64.to_radians().cos()));
+        assert_eq!(((Variable(0) + 2*Variable(1))*PI/180.0).sin()
+            .deriv2(&store, 0_usize, 1_usize).3, -0.00011624748768739417
+            );
+        assert_eq!(((Variable(0) + 2*Variable(1))*PI/180.0).cos()
+            .deriv2(&store, 0_usize, 1_usize).3, -0.0005980414796286429
+            );
     }
 
     #[test]

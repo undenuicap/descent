@@ -7,7 +7,7 @@ use expression::{Expr, Evaluate, Store};
 //}
 
 pub trait Model {
-    fn add_var(&mut self, lb: f64, ub: f64) -> Expr;
+    fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Expr;
     fn add_par(&mut self, val: f64) -> Expr;
     fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize;
     fn set_obj(&mut self, expr: Expr);

@@ -306,10 +306,10 @@ struct IpoptCBData<'a> {
 }
 
 impl Model for IpoptModel {
-    fn add_var(&mut self, lb: f64, ub: f64) -> Expr {
+    fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Expr {
         self.prepared = false;
         let id = self.model.vars.len();
-        self.model.vars.push(Variable { lb: lb, ub: ub, init: 0.0 });
+        self.model.vars.push(Variable { lb: lb, ub: ub, init: init });
         Expr::Variable(id)
     }
 
@@ -554,11 +554,12 @@ extern fn l_hess(
 
 #[cfg(test)]
 mod tests {
+    use expression::NumOps;
     use super::*;
     #[test]
     fn univar_problem() {
         let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0);
+        let x = m.add_var(1.0, 5.0, 0.0);
         m.set_obj(&x*&x);
         assert!(m.set_str_option("sb", "yes"));
         assert!(m.set_int_option("print_level", 0));
@@ -574,8 +575,8 @@ mod tests {
     #[test]
     fn multivar_problem() {
         let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0);
-        let y = m.add_var(-1.0, 1.0);
+        let x = m.add_var(1.0, 5.0, 0.0);
+        let y = m.add_var(-1.0, 1.0, 0.0);
         m.set_obj(&x*&x + &y*&y + &x*&y);
         m.silence();
         let (stat, sol) = m.solve();
@@ -591,8 +592,8 @@ mod tests {
     #[test]
     fn equality_problem() {
         let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0);
-        let y = m.add_var(-1.0, 1.0);
+        let x = m.add_var(1.0, 5.0, 0.0);
+        let y = m.add_var(-1.0, 1.0, 0.0);
         m.set_obj(&x*&x + &y*&y + &x*&y);
         m.add_con(&x + &y, 0.75, 0.75);
         m.silence();
@@ -609,8 +610,8 @@ mod tests {
     #[test]
     fn inequality_problem() {
         let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0);
-        let y = m.add_var(-1.0, 1.0);
+        let x = m.add_var(1.0, 5.0, 0.0);
+        let y = m.add_var(-1.0, 1.0, 0.0);
         m.set_obj(&x*&x + &y*&y + &x*&y);
         m.add_con(&x + &y, 0.25, 0.40);
         m.silence();
@@ -627,8 +628,8 @@ mod tests {
     #[test]
     fn quad_constraint_problem() {
         let mut m = IpoptModel::new();
-        let x = m.add_var(-10.0, 10.0);
-        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY);
+        let x = m.add_var(-10.0, 10.0, 0.0);
+        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
         m.set_obj(2*&y);
         m.add_con(&y - &x*&x + &x, 0.0, f64::INFINITY);
         m.silence();
@@ -636,9 +637,38 @@ mod tests {
         assert_eq!(stat, SolutionStatus::Solved);
         assert!(sol.is_some());
         if let Some(ref s) = sol {
-            assert!((s.value(&x) - 0.5).abs() < 1e-6);
-            assert!((s.value(&y) + 0.25).abs() < 1e-6);
-            assert!((s.obj_val + 0.5).abs() < 1e-6);
+            assert!((s.value(&x) - 0.5).abs() < 1e-5);
+            assert!((s.value(&y) + 0.25).abs() < 1e-5);
+            assert!((s.obj_val + 0.5).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn large_problem() {
+        //let n = 100000;
+        let n = 10;
+        let mut m = IpoptModel::new();
+        let mut xs = Vec::new();
+        for i in 0..n {
+            xs.push(m.add_var(-1.5, 0.0, -0.5));
+        }
+        let mut obj = Expr::Integer(0);
+        for x in &xs {
+            obj = obj + (x - 1).powi(2);
+        }
+        m.set_obj(obj);
+        for i in 0..(n-2) {
+            let a = ((i + 2) as f64)/(n as f64);
+            m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
+                      *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
+        }
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        // This is ifor 100000 case
+        //if let Some(ref s) = sol {
+        //    assert!((s.obj_val - 3.04115423e+5).abs() < 1e-6);
+        //}
     }
 }
