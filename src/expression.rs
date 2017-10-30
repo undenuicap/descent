@@ -618,7 +618,9 @@ impl Retrieve for Store {
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
     use super::*;
+
     #[test]
     fn addition() {
         use expression::Expr::*;
@@ -781,5 +783,65 @@ mod tests {
         expect.higher.insert((1, 5));
         expect.higher.insert((4, 5));
         assert_eq!(e.degree(), expect);
+    }
+
+    #[bench]
+    fn quad_construct(b: &mut test::Bencher) {
+        use expression::Expr::*;
+        let n = 500;
+        let mut xs = Vec::new();
+        let mut store = Store::new();
+        for i in 0..n {
+            xs.push(Variable(i));
+            store.vars.push(0.5);
+        }
+        b.iter(|| {
+            let mut e = Expr::Integer(0);
+            for x in &xs {
+                e = e + 3.0*(x - 1).powi(2) + 5.0;
+            }
+        });
+    }
+
+    #[bench]
+    fn quad_deriv1(b: &mut test::Bencher) {
+        use expression::Expr::*;
+        let n = 100;
+        let mut xs = Vec::new();
+        let mut store = Store::new();
+        for i in 0..n {
+            xs.push(Variable(i));
+            store.vars.push(0.5);
+        }
+        let mut e = Expr::Integer(0);
+        for x in &xs {
+            e = e + 3.0*(x - 1).powi(2) + 5.0;
+        }
+        b.iter(|| {
+            for i in 0..n {
+                e.deriv(&store, i);
+            }
+        });
+    }
+
+    #[bench]
+    fn quad_deriv2(b: &mut test::Bencher) {
+        use expression::Expr::*;
+        let n = 50;
+        let mut xs = Vec::new();
+        let mut store = Store::new();
+        for i in 0..n {
+            xs.push(Variable(i));
+            store.vars.push(0.5);
+        }
+        let mut e = Expr::Integer(0);
+        for i in 1..n {
+            e = e + 3.0*(&xs[i - 1] - &xs[i] + 1).powi(2) + 5.0;
+        }
+        b.iter(|| {
+            for i in 1..n {
+                e.deriv2(&store, i - 1, i);
+            }
+        });
     }
 }

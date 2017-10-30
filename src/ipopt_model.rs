@@ -557,6 +557,7 @@ extern fn l_hess(
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
     use expression::NumOps;
     use super::*;
     #[test]
@@ -646,32 +647,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn large_problem() {
+    #[bench]
+    fn large_problem(b: &mut test::Bencher) {
         //let n = 100000;
         let n = 10;
-        let mut m = IpoptModel::new();
-        let mut xs = Vec::new();
-        for i in 0..n {
-            xs.push(m.add_var(-1.5, 0.0, -0.5));
-        }
-        let mut obj = Expr::Integer(0);
-        for x in &xs {
-            obj = obj + (x - 1).powi(2);
-        }
-        m.set_obj(obj);
-        for i in 0..(n-2) {
-            let a = ((i + 2) as f64)/(n as f64);
-            m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
-                      *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
-        }
-        //m.silence();
-        let (stat, sol) = m.solve();
-        assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        // This is ifor 100000 case
-        //if let Some(ref s) = sol {
-        //    assert!((s.obj_val - 3.04115423e+5).abs() < 1e-6);
-        //}
+        b.iter(|| {
+            let mut m = IpoptModel::new();
+            let mut xs = Vec::new();
+            for i in 0..n {
+                xs.push(m.add_var(-1.5, 0.0, -0.5));
+            }
+            let mut obj = Expr::Integer(0);
+            for x in &xs {
+                obj = obj + (x - 1).powi(2);
+            }
+            m.set_obj(obj);
+            for i in 0..(n-2) {
+                let a = ((i + 2) as f64)/(n as f64);
+                m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
+                          *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
+            }
+            m.silence();
+            let (stat, sol) = m.solve();
+        });
     }
 }
