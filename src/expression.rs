@@ -76,13 +76,78 @@ impl Tape {
         self.ops.push(op);
     }
 
+    // Should only call if both non-empty
     fn append(&mut self, other: &mut Tape) {
         use self::Operation::*;
         self.ops.append(&mut other.ops);
-        // This max longer than required if other is empty
         self.n_max = max(self.n_max, self.n_end + other.n_max);
         self.n_end += other.n_end;
     }
+
+    fn deriv_stack(&self, st: &mut Vec<(f64, f64)>, ret: &Retrieve, x: ID)
+            -> (f64, f64) {
+        use self::Operation::*;
+        use self::{Var, Par};
+        let mut i = 0_usize;
+        st[0] = (0.0, 0.0);
+        for op in &self.ops {
+            match *op {
+                Add => {
+                    st[i - 2].0 += st[i - 1].0;
+                    st[i - 2].1 += st[i - 1].1;
+                    i -= 1;
+                },
+                Mul => {
+                    let r0 = st[i - 2];
+                    let r1 = st[i - 1];
+                    st[i - 2] = (r0.0*r1.0, r0.0*r1.1 + r1.0*r0.1);
+                    i -= 1;
+                },
+                Neg => {
+                    st[i - 1].0 = -st[i - 1].0;
+                    st[i - 1].1 = -st[i - 1].1;
+                },
+                Pow(p) => {
+                    match p {
+                        0 => st[i - 1] = (1.0, 0.0),
+                        1 => (),
+                        _ => {
+                            let r = st[i - 1];
+                            st[i - 1] = (r.0.powi(p),
+                                f64::from(p)*r.0.powi(p - 1)*r.1);
+                        },
+                    }
+                },
+                Sin => {
+                    let r = st[i - 1];
+                    st[i - 1] = (r.0.sin(), r.0.cos()*r.1);
+                },
+                Cos => {
+                    let r = st[i - 1];
+                    st[i - 1] = (r.0.cos(), -r.0.sin()*r.1);
+                },
+                Variable(Var(id)) => {
+                    st[i] = (ret.get_var(id),
+                        if id == x { 1.0 } else { 0.0 });
+                    i += 1;
+                },
+                Parameter(Par(id)) => {
+                    st[i] = (ret.get_par(id), 0.0);
+                    i += 1;
+                },
+                Float(v) => {
+                    st[i] = (v, 0.0);
+                    i += 1;
+                },
+                Integer(v) => {
+                    st[i] = (f64::from(v), 0.0);
+                    i += 1;
+                },
+            }
+        }
+        st[0]
+    }
+
 }
 
 impl From<Var> for Tape {
@@ -930,9 +995,15 @@ impl std::ops::Add<Tape> for Tape {
     type Output = Tape;
 
     fn add(mut self, mut other: Tape) -> Tape {
-        self.append(&mut other);
-        self.add_op(Operation::Add);
-        self
+        if self.ops.is_empty() {
+            other
+        } else if other.ops.is_empty() {
+            self
+        } else {
+            self.append(&mut other);
+            self.add_op(Operation::Add);
+            self
+        }
     }
 }
 
@@ -940,10 +1011,16 @@ impl std::ops::Sub<Tape> for Tape {
     type Output = Tape;
 
     fn sub(mut self, mut other: Tape) -> Tape {
-        self.append(&mut other);
-        self.add_op(Operation::Neg);
-        self.add_op(Operation::Add);
-        self
+        if self.ops.is_empty() {
+            other
+        } else if other.ops.is_empty() {
+            self
+        } else {
+            self.append(&mut other);
+            self.add_op(Operation::Neg);
+            self.add_op(Operation::Add);
+            self
+        }
     }
 }
 
@@ -951,9 +1028,15 @@ impl std::ops::Mul<Tape> for Tape {
     type Output = Tape;
 
     fn mul(mut self, mut other: Tape) -> Tape {
-        self.append(&mut other);
-        self.add_op(Operation::Mul);
-        self
+        if self.ops.is_empty() {
+            other
+        } else if other.ops.is_empty() {
+            self
+        } else {
+            self.append(&mut other);
+            self.add_op(Operation::Mul);
+            self
+        }
     }
 }
 
@@ -1242,26 +1325,29 @@ mod tests {
         t = t*Par(0);
     }
 
-    // Currently panics
-    //#[bench]
-    //fn tape_quad_deriv1(b: &mut test::Bencher) {
-    //    use expression::{Var, Par, Tape};
-    //    let n = 100;
-    //    let mut xs = Vec::new();
-    //    let mut store = Store::new();
-    //    for i in 0..n {
-    //        xs.push(Var(i));
-    //        store.vars.push(0.5);
-    //    }
-    //    let mut e = Tape::new();
-    //    for x in &xs {
-    //        e = e + 3.0*(Tape::from(x.clone()) - 1).powi(2) + 5.0;
-    //    }
-    //    b.iter(|| {
-    //        for i in 0..n {
-    //            e.deriv(&store, i);
-    //        }
-    //    });
-    //}
+    #[bench]
+    fn tape_quad_deriv1(b: &mut test::Bencher) {
+        use expression::{Var, Par, Tape};
+        let n = 100;
+        let mut xs = Vec::new();
+        let mut store = Store::new();
+        for i in 0..n {
+            xs.push(Var(i));
+            store.vars.push(0.5);
+        }
+        let mut e = Tape::new();
+        for x in &xs {
+            e = e + 3.0*(Tape::from(x.clone()) - 1).powi(2) + 5.0;
+        }
+        //println!("{:?}", &e);
+        let mut st: Vec<(f64, f64)> = Vec::new();
+        st.resize(e.n_max, (0.0, 0.0));
+        b.iter(|| {
+            for i in 0..n {
+                //e.deriv(&store, i);
+                e.deriv_stack(&mut st, &store, i);
+            }
+        });
+    }
 
 }
