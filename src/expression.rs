@@ -20,10 +20,10 @@ pub trait Evaluate {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Var(pub usize);
+struct Var(ID);
 
 #[derive(Debug, Clone, Copy)]
-struct Par(pub usize);
+struct Par(ID);
 
 #[derive(Debug, Clone)]
 enum Operation {
@@ -46,7 +46,7 @@ enum Operation {
     // MulFloat(f64)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Tape {
     ops: Vec<Operation>,
     n_max: usize, // maximum stack size
@@ -82,6 +82,16 @@ impl Tape {
         // This max longer than required if other is empty
         self.n_max = max(self.n_max, self.n_end + other.n_max);
         self.n_end += other.n_end;
+    }
+}
+
+impl From<Var> for Tape {
+    fn from(v: Var) -> Tape {
+        Tape {
+            ops: vec![self::Operation::Variable(v)],
+            n_max: 1,
+            n_end: 1,
+        }
     }
 }
 
@@ -246,6 +256,77 @@ impl<'a> NumOps for &'a Expr {
     }
 }
 
+// Have to use trait because straight fn overloading not possible
+pub trait NumOpsT {
+    fn powi(self, p: i32) -> Tape;
+    fn sin(self) -> Tape;
+    fn cos(self) -> Tape;
+}
+
+impl NumOpsT for Var {
+    fn powi(self, p: i32) -> Tape {
+        let mut t = Tape::new();
+        t.add_op(Operation::Variable(self));
+        t.add_op(Operation::Pow(p));
+        t
+    }
+
+    fn sin(self) -> Tape {
+        let mut t = Tape::new();
+        t.add_op(Operation::Variable(self));
+        t.add_op(Operation::Sin);
+        t
+    }
+
+    fn cos(self) -> Tape {
+        let mut t = Tape::new();
+        t.add_op(Operation::Variable(self));
+        t.add_op(Operation::Cos);
+        t
+    }
+}
+
+impl NumOpsT for Par {
+    fn powi(self, p: i32) -> Tape {
+        let mut t = Tape::new();
+        t.add_op(Operation::Parameter(self));
+        t.add_op(Operation::Pow(p));
+        t
+    }
+
+    fn sin(self) -> Tape {
+        let mut t = Tape::new();
+        t.add_op(Operation::Parameter(self));
+        t.add_op(Operation::Sin);
+        t
+    }
+
+    fn cos(self) -> Tape {
+        let mut t = Tape::new();
+        t.add_op(Operation::Parameter(self));
+        t.add_op(Operation::Cos);
+        t
+    }
+}
+
+impl NumOpsT for Tape {
+    fn powi(mut self, p: i32) -> Tape {
+        self.add_op(Operation::Pow(p));
+        self
+    }
+
+    fn sin(mut self) -> Tape {
+        self.add_op(Operation::Sin);
+        self
+    }
+
+    fn cos(mut self) -> Tape {
+        self.add_op(Operation::Cos);
+        self
+    }
+}
+
+// As used think this might be filling out top right, not bottom left of hessian
 fn order(a: ID, b: ID) -> (ID, ID) {
     if a > b { (b, a) } else { (a, b) }
 }
@@ -774,42 +855,107 @@ binary_ops_cast_g4!(Sub, sub, Expr, f64, Expr, Expr::Float);
 binary_ops_cast_g4!(Mul, mul, Expr, f64, Expr, Expr::Float);
 binary_ops_cast_g4!(Div, div, Expr, f64, Expr, Expr::Float);
 
-//impl std::ops::Add<f64> for Tape {
-//    type Output = Tape;
-//
-//    fn add(self, other: f64) -> Tape {
-//        self.add_op(Operations::Float(other));
-//        self.add_op(Operations::Add);
-//        self
-//    }
-//}
-//
-//impl std::ops::Add<Tape> for f64 {
-//    type Output = Tape;
-//
-//    fn add(self, other: Tape) -> Tape {
-//        other.add(self)
-//    }
-//}
-//
-//impl std::ops::Add<Operation> for Tape {
-//    type Output = Tape;
-//
-//    fn add(self, other: Operation) -> Tape {
-//        self.add_op
-//        other.add(self)
-//    }
-//}
-//
-//impl std::ops::Add<Tape> for Tape {
-//    type Output = Tape;
-//
-//    fn add(self, other: Tape) -> Tape {
-//        self.append(&mut other);
-//        self.add_op(Operations::Add);
-//        self
-//    }
-//}
+macro_rules! b_ops {
+    ( $U:ty, $C:expr ) => {
+        impl std::ops::Add<$U> for Tape {
+            type Output = Tape;
+
+            fn add(mut self, other: $U) -> Tape {
+                self.add_op($C(other));
+                self.add_op(Operation::Add);
+                self
+            }
+        }
+
+        impl std::ops::Add<Tape> for $U {
+            type Output = Tape;
+
+            fn add(self, mut other: Tape) -> Tape {
+                other.add_op($C(self));
+                other.add_op(Operation::Add);
+                other
+            }
+        }
+
+        impl std::ops::Mul<$U> for Tape {
+            type Output = Tape;
+
+            fn mul(mut self, other: $U) -> Tape {
+                self.add_op($C(other));
+                self.add_op(Operation::Mul);
+                self
+            }
+        }
+
+        impl std::ops::Mul<Tape> for $U {
+            type Output = Tape;
+
+            fn mul(self, mut other: Tape) -> Tape {
+                other.add_op($C(self));
+                other.add_op(Operation::Mul);
+                other
+            }
+        }
+
+        impl std::ops::Sub<$U> for Tape {
+            type Output = Tape;
+
+            fn sub(mut self, other: $U) -> Tape {
+                self.add_op($C(other));
+                self.add_op(Operation::Neg);
+                self.add_op(Operation::Add);
+                self
+            }
+        }
+
+        impl std::ops::Sub<Tape> for $U {
+            type Output = Tape;
+
+            fn sub(self, mut other: Tape) -> Tape {
+                other.add_op(Operation::Neg);
+                other.add_op($C(self));
+                other.add_op(Operation::Add);
+                other
+            }
+        }
+    };
+}
+
+b_ops!(f64, Operation::Float);
+b_ops!(i32, Operation::Integer);
+b_ops!(Var, Operation::Variable);
+b_ops!(Par, Operation::Parameter);
+
+impl std::ops::Add<Tape> for Tape {
+    type Output = Tape;
+
+    fn add(mut self, mut other: Tape) -> Tape {
+        self.append(&mut other);
+        self.add_op(Operation::Add);
+        self
+    }
+}
+
+impl std::ops::Sub<Tape> for Tape {
+    type Output = Tape;
+
+    fn sub(mut self, mut other: Tape) -> Tape {
+        self.append(&mut other);
+        self.add_op(Operation::Neg);
+        self.add_op(Operation::Add);
+        self
+    }
+}
+
+impl std::ops::Mul<Tape> for Tape {
+    type Output = Tape;
+
+    fn mul(mut self, mut other: Tape) -> Tape {
+        self.append(&mut other);
+        self.add_op(Operation::Mul);
+        self
+    }
+}
 
 pub struct Store {
     pub vars: Vec<f64>,
@@ -1083,4 +1229,39 @@ mod tests {
         assert_eq!(tape.deriv(&store, 0), (14.0, 1.0));
         assert_eq!(tape.deriv(&store, 1), (14.0, 6.0));
     }
+
+    #[test]
+    fn tape_ops() {
+        use expression::Operation::*;
+        use expression::{Var, Par};
+
+        let mut t = Tape::new();
+        t = t + 5.0;
+        t = 5.0 + t;
+        t = Var(0) + t;
+        t = t*Par(0);
+    }
+
+    // Currently panics
+    //#[bench]
+    //fn tape_quad_deriv1(b: &mut test::Bencher) {
+    //    use expression::{Var, Par, Tape};
+    //    let n = 100;
+    //    let mut xs = Vec::new();
+    //    let mut store = Store::new();
+    //    for i in 0..n {
+    //        xs.push(Var(i));
+    //        store.vars.push(0.5);
+    //    }
+    //    let mut e = Tape::new();
+    //    for x in &xs {
+    //        e = e + 3.0*(Tape::from(x.clone()) - 1).powi(2) + 5.0;
+    //    }
+    //    b.iter(|| {
+    //        for i in 0..n {
+    //            e.deriv(&store, i);
+    //        }
+    //    });
+    //}
+
 }
