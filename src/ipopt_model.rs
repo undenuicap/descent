@@ -654,7 +654,7 @@ mod tests {
         b.iter(|| {
             let mut m = IpoptModel::new();
             let mut xs = Vec::new();
-            for i in 0..n {
+            for _i in 0..n {
                 xs.push(m.add_var(-1.5, 0.0, -0.5));
             }
             let mut obj = Expr::Integer(0);
@@ -668,7 +668,8 @@ mod tests {
                           *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
             }
             m.silence();
-            let (stat, sol) = m.solve();
+            m.solve();
+            //let (stat, sol) = m.solve();
         });
     }
 }

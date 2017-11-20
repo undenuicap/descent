@@ -47,7 +47,7 @@ enum Operation {
 }
 
 #[derive(Debug, Clone)]
-struct Tape {
+pub struct Tape {
     ops: Vec<Operation>,
     n_max: usize, // maximum stack size
     n_end: usize, // stack size at end of tape
@@ -78,7 +78,6 @@ impl Tape {
 
     // Should only call if both non-empty
     fn append(&mut self, other: &mut Tape) {
-        use self::Operation::*;
         self.ops.append(&mut other.ops);
         self.n_max = max(self.n_max, self.n_end + other.n_max);
         self.n_end += other.n_end;
@@ -266,7 +265,7 @@ impl Evaluate for Tape {
         st[0]
     }
 
-    fn deriv2(&self, ret: &Retrieve, x: ID, y: ID) -> (f64, f64, f64, f64) {
+    fn deriv2(&self, _ret: &Retrieve, _x: ID, _y: ID) -> (f64, f64, f64, f64) {
         (0.0, 0.0, 0.0, 0.0)
     }
 }
@@ -1292,7 +1291,7 @@ mod tests {
     #[test]
     fn tape_test() {
         use expression::Operation::*;
-        use expression::{Var, Par};
+        use expression::Var;
         let mut store = Store::new();
         store.vars.push(5.0);
         store.vars.push(4.0);
@@ -1315,19 +1314,23 @@ mod tests {
 
     #[test]
     fn tape_ops() {
-        use expression::Operation::*;
-        use expression::{Var, Par};
+        use expression::{Var,Par,Tape};
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
 
         let mut t = Tape::new();
         t = t + 5.0;
         t = 5.0 + t;
         t = Var(0) + t;
         t = t*Par(0);
+
+        assert_eq!(t.value(&store), 80.0);
     }
 
     #[bench]
     fn tape_quad_deriv1(b: &mut test::Bencher) {
-        use expression::{Var, Par, Tape};
+        use expression::{Var, Tape};
         let n = 100;
         let mut xs = Vec::new();
         let mut store = Store::new();

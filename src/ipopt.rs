@@ -16,8 +16,9 @@ pub type UserDataPtr = *mut c_void;
 pub enum IpoptProblemInfo {} // type-safe way to represent opaque structs
 pub type IpoptProblem = *mut IpoptProblemInfo;
 
-#[derive(Debug, PartialEq)]
 #[repr(C)]
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum ApplicationReturnStatus {
     SolveSucceeded = 0,
     SolvedToAcceptableLevel = 1,
