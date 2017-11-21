@@ -57,6 +57,14 @@ impl Tape {
     // Consider empty tape has a meaning (some sensible default)
     fn new() -> Tape {
         Tape {
+            ops: vec![Operation::Float(0.0)],
+            n_max: 1, // required stack size (1 to allow empty tape)
+            n_end: 1, // stack size at end of tape (1 if valid non-empty tape)
+        }
+    }
+
+    fn empty() -> Tape {
+        Tape {
             ops: Vec::new(),
             n_max: 1, // required stack size (1 to allow empty tape)
             n_end: 0, // stack size at end of tape (1 if valid non-empty tape)
@@ -146,7 +154,6 @@ impl Tape {
         }
         st[0]
     }
-
 }
 
 impl From<Var> for Tape {
@@ -329,21 +336,21 @@ pub trait NumOpsT {
 
 impl NumOpsT for Var {
     fn powi(self, p: i32) -> Tape {
-        let mut t = Tape::new();
+        let mut t = Tape::empty();
         t.add_op(Operation::Variable(self));
         t.add_op(Operation::Pow(p));
         t
     }
 
     fn sin(self) -> Tape {
-        let mut t = Tape::new();
+        let mut t = Tape::empty();
         t.add_op(Operation::Variable(self));
         t.add_op(Operation::Sin);
         t
     }
 
     fn cos(self) -> Tape {
-        let mut t = Tape::new();
+        let mut t = Tape::empty();
         t.add_op(Operation::Variable(self));
         t.add_op(Operation::Cos);
         t
@@ -352,21 +359,21 @@ impl NumOpsT for Var {
 
 impl NumOpsT for Par {
     fn powi(self, p: i32) -> Tape {
-        let mut t = Tape::new();
+        let mut t = Tape::empty();
         t.add_op(Operation::Parameter(self));
         t.add_op(Operation::Pow(p));
         t
     }
 
     fn sin(self) -> Tape {
-        let mut t = Tape::new();
+        let mut t = Tape::empty();
         t.add_op(Operation::Parameter(self));
         t.add_op(Operation::Sin);
         t
     }
 
     fn cos(self) -> Tape {
-        let mut t = Tape::new();
+        let mut t = Tape::empty();
         t.add_op(Operation::Parameter(self));
         t.add_op(Operation::Cos);
         t
@@ -1296,7 +1303,7 @@ mod tests {
         store.vars.push(5.0);
         store.vars.push(4.0);
 
-        let mut tape = Tape::new();
+        let mut tape = Tape::empty();
         // v0 + (1.0 - v1)^2
         tape.add_op(Variable(Var(0)));
         tape.add_op(Float(1.0));
@@ -1325,7 +1332,7 @@ mod tests {
         t = Var(0) + t;
         t = t*Par(0);
 
-        assert_eq!(t.value(&store), 80.0);
+        assert_eq!(t.value(&store), 60.0);
     }
 
     #[bench]
