@@ -46,6 +46,51 @@ enum Operation {
     // MulFloat(f64)
 }
 
+//// Version where implicitly use the value to the left
+//// Must start with terminal value for this to be valid
+//// Index must be less than index of entry in tape
+//#[derive(Debug, Clone)]
+//enum Oper {
+//    Add(usize),
+//    Mul(usize),
+//    Neg, // negate
+//    Pow(i32),
+//    Sin,
+//    Cos,
+//    Variable(Var),
+//    Parameter(Par),
+//    Float(f64),
+//    Integer(i32),
+//}
+//
+//#[derive(Debug, Clone)]
+//pub struct WorkSpace {
+//    values: Vec<f64>,
+//    deriv1: Vec<Vec<f64>>,
+//    deriv2: Vec<Vec<f64>>,
+//}
+//
+//#[derive(Debug, Clone)]
+//pub struct Film {
+//    ops: Vec<Oper>,
+//}
+//
+//impl Film {
+//    fn ad(&self, ws: &mut WorkSpace) {
+//        use self::Oper::*;
+//        use self::{Var, Par};
+//        for (i, ref op) in self.ops.iter().enumerate() {
+//            match *op {
+//                Add(j) => {
+//                    ws.values[i] = ws.values[i - 1] + ws.values[j];
+//                    // Now loop through vars and do derivs
+//                    // Now loop through pairs and do second derivs
+//                },
+//            }
+//        }
+//    }
+//}
+
 #[derive(Debug, Clone)]
 pub struct Tape {
     ops: Vec<Operation>,
