@@ -77,13 +77,17 @@ impl Column {
 
 pub type WorkSpace = Vec<Column>;
 
+// Might want to pass this in chunks to ad(), so that can use same code to
+// get values for lin and quad once.
+// When doing this should consider setting all get_var accesses to nan.
+// Can then check results to make sure that we haven't touched any variables.
 #[derive(Debug, Clone, Default)]
 pub struct FilmInfo {
     // Linear and quadratic respective first and second derivatives only need
     // to be computed once on parameter change.
     lin: Vec<Var>, // const derivative
     nlin: Vec<Var>, // non-const derivative
-    // Below the usize are indices into nonlinear, a variable representation
+    // Below the usize are indices into nlin, a variable representation
     // that is local
     quad: Vec<(usize, usize)>, // const second derivative
     nquad: Vec<(usize, usize)>, // non-const second derivative
@@ -105,24 +109,25 @@ impl Film {
         Film::default()
     }
 
-    fn ad(&self, ws: &mut WorkSpace, info: &FilmInfo, ret: &Retrieve) {
+    fn ad(&self, d1: &Vec<Var>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
+            ws: &mut WorkSpace) {
         use self::Oper::*;
         use self::{Var, Par};
         ws.resize(self.ops.len(), Column::new());
         for (i, op) in self.ops.iter().enumerate() {
             let (left, right) = ws.split_at_mut(i);
             let cur = &mut right[0]; // the i value from original
-            cur.der1.resize(info.nlin.len(), 0.0);
-            cur.der2.resize(info.nquad.len(), 0.0);
+            cur.der1.resize(d1.len(), 0.0);
+            cur.der2.resize(d2.len(), 0.0);
             match *op {
                 Add(j) => {
                     let pre = &left[i - 1];
                     let oth = &left[j];
                     cur.val = pre.val + oth.val;
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = pre.der1[k] + oth.der1[k];
                     }
-                    for k in 0..(info.nquad.len()) {
+                    for k in 0..(d2.len()) {
                         cur.der2[k] = pre.der2[k] + oth.der2[k];
                     }
                 },
@@ -130,11 +135,11 @@ impl Film {
                     let pre = &left[i - 1];
                     let oth = &left[j];
                     cur.val = pre.val*oth.val;
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = pre.der1[k]*oth.val
                                     + pre.val*oth.der1[k];
                     }
-                    for (k, &(k1, k2)) in info.nquad.iter().enumerate() {
+                    for (k, &(k1, k2)) in d2.iter().enumerate() {
                         cur.der2[k] = pre.der2[k]*oth.val
                                     + pre.val*oth.der2[k]
                                     + pre.der1[k1]*oth.der1[k2]
@@ -144,10 +149,10 @@ impl Film {
                 Neg => {
                     let pre = &left[i - 1];
                     cur.val = -pre.val;
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = -pre.der1[k];
                     }
-                    for k in 0..(info.nquad.len()) {
+                    for k in 0..(d2.len()) {
                         cur.der2[k] = -pre.der2[k];
                     }
                 },
@@ -156,19 +161,19 @@ impl Film {
                     match p {
                         0 => {
                             cur.val = 1.0;
-                            for k in 0..(info.nlin.len()) {
+                            for k in 0..(d1.len()) {
                                 cur.der1[k] = 0.0;
                             }
-                            for k in 0..(info.nquad.len()) {
+                            for k in 0..(d2.len()) {
                                 cur.der2[k] = 0.0;
                             }
                         },
                         1 => {
                             cur.val = pre.val;
-                            for k in 0..(info.nlin.len()) {
+                            for k in 0..(d1.len()) {
                                 cur.der1[k] = pre.der1[k];
                             }
-                            for k in 0..(info.nquad.len()) {
+                            for k in 0..(d2.len()) {
                                 cur.der2[k] = pre.der2[k];
                             }
                         },
@@ -176,10 +181,10 @@ impl Film {
                             cur.val = pre.val.powi(p);
                             let vald = pre.val.powi(p - 1);
                             let valdd = pre.val.powi(p - 2);
-                            for k in 0..(info.nlin.len()) {
+                            for k in 0..(d1.len()) {
                                 cur.der1[k] = f64::from(p)*pre.der1[k]*vald;
                             }
-                            for (k, &(k1, k2)) in info.nquad.iter().enumerate() {
+                            for (k, &(k1, k2)) in d2.iter().enumerate() {
                                 cur.der2[k] = f64::from(p)*pre.der2[k]*vald
                                             + f64::from(p*(p - 1))
                                             *pre.der1[k1]*pre.der1[k2]
@@ -192,10 +197,10 @@ impl Film {
                     let pre = &left[i - 1];
                     cur.val = pre.val.sin();
                     let valcos = pre.val.cos();
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = pre.der1[k]*valcos;
                     }
-                    for (k, &(k1, k2)) in info.nquad.iter().enumerate() {
+                    for (k, &(k1, k2)) in d2.iter().enumerate() {
                         cur.der2[k] = pre.der2[k]*valcos
                                     - pre.der1[k1]*pre.der1[k2]*cur.val;
                     }
@@ -204,43 +209,67 @@ impl Film {
                     let pre = &left[i - 1];
                     cur.val = pre.val.cos();
                     let valsin = pre.val.sin();
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = -pre.der1[k]*valsin;
                     }
-                    for (k, &(k1, k2)) in info.nquad.iter().enumerate() {
+                    for (k, &(k1, k2)) in d2.iter().enumerate() {
                         cur.der2[k] = -pre.der2[k]*valsin
                                     - pre.der1[k1]*pre.der1[k2]*cur.val;
                     }
                 },
                 Variable(Var(id)) => {
                     cur.val = ret.get_var(id);
-                    for (k, &Var(did)) in info.nlin.iter().enumerate() {
+                    for (k, &Var(did)) in d1.iter().enumerate() {
                         cur.der1[k] = if id == did { 1.0 } else { 0.0 };
                     }
-                    for k in 0..(info.nquad.len()) {
+                    for k in 0..(d2.len()) {
                         cur.der2[k] = 0.0;
                     }
                 },
                 Parameter(Par(id)) => {
                     cur.val = ret.get_par(id);
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = 0.0;
                     }
-                    for k in 0..(info.nquad.len()) {
+                    for k in 0..(d2.len()) {
                         cur.der2[k] = 0.0;
                     }
                 },
                 Float(val) => {
                     cur.val = val;
-                    for k in 0..(info.nlin.len()) {
+                    for k in 0..(d1.len()) {
                         cur.der1[k] = 0.0;
                     }
-                    for k in 0..(info.nquad.len()) {
+                    for k in 0..(d2.len()) {
                         cur.der2[k] = 0.0;
                     }
                 },
             }
         }
+    }
+
+    fn get_info(&self) -> FilmInfo {
+        use self::Oper::*;
+        use self::{Var, Par};
+        let mut lin: Vec<HashSet<ID>> = Vec::new();
+        let mut quad: Vec<HashSet<(ID, ID)>> = Vec::new();
+        let mut nquad: Vec<HashSet<(ID, ID)>> = Vec::new();
+        for (i, op) in self.ops.iter().enumerate() {
+            match *op {
+                Add(j) => {
+                    let l = lin[i - 1].union(&lin[j]).cloned().collect();
+                    lin.push(l);
+                    let q = quad[i - 1].union(&quad[j]).cloned().collect();
+                    quad.push(q);
+                    let nq = nquad[i - 1].union(&nquad[j]).cloned().collect();
+                    nquad.push(nq);
+                },
+                _ => {
+                },
+            }
+        }
+        let mut info = FilmInfo::new();
+        info
     }
 }
 
@@ -1580,12 +1609,30 @@ mod tests {
         let mut finfo = FilmInfo::new();
         finfo.lin.push(Var(0));
         finfo.nlin.push(Var(1));
-        // pretend nquad
-        finfo.nquad.push((0, 0)); // the first entry in nlin
-        film.ad(&mut ws, &finfo, &store);
+        finfo.quad.push((0, 0)); // the first entry in nlin
+
+        // Get constant first derivatives
+        // Call on parameter change
+        // Copy out and store first derivatives
+        film.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
+        assert_eq!(ws.len(), 7);
+        assert_eq!(ws[6].val, 14.0);
+        assert_eq!(ws[6].der1[0], 1.0); // Var(0)
+
+        // Get constant second derivatives
+        // Call on parameter change
+        // Copy out and store second derivatives
+        film.ad(&finfo.nlin, &finfo.quad, &store, &mut ws);
         assert_eq!(ws.len(), 7);
         assert_eq!(ws[6].val, 14.0);
         assert_eq!(ws[6].der1[0], 6.0); // Var(1)
         assert_eq!(ws[6].der2[0], 2.0); // Var(1), Var(1)
+
+        // Get chaning derivatives
+        // Call every time
+        film.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+        assert_eq!(ws.len(), 7);
+        assert_eq!(ws[6].val, 14.0);
+        assert_eq!(ws[6].der1[0], 6.0); // Var(1)
     }
 }
