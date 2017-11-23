@@ -1,7 +1,7 @@
 extern crate fnv;
 
 use expression::{Expr, Evaluate, Retrieve, ID};
-use model::{Model, Solution, SolutionStatus};
+use model_expr::{Model, Solution, SolutionStatus};
 use ipopt;
 use std::slice;
 //use std::collections::HashMap;
@@ -235,7 +235,7 @@ impl IpoptModel {
             }
             // Should probably save ipopt_status to self
             use ipopt::ApplicationReturnStatus as ARS;
-            use model::SolutionStatus as SS;
+            use model_expr::SolutionStatus as SS;
             let status = match ipopt_status {
                 ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel =>
                     SS::Solved,
