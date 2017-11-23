@@ -1,4 +1,4 @@
-use expression::{Expr, Evaluate, Store};
+use expression::{Film, Store, ID, Var, Par, WorkSpace};
 
 //pub enum VarType {
 //    Continuous,
@@ -6,19 +6,22 @@ use expression::{Expr, Evaluate, Store};
 //    Binary,
 //}
 
+#[derive(Debug, Clone, Copy)]
+struct Con(ID); // Constraint ID
+
 pub trait Model {
-    fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Expr;
-    fn add_par(&mut self, val: f64) -> Expr;
-    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize;
-    fn set_obj(&mut self, expr: Expr);
+    fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var;
+    fn add_par(&mut self, val: f64) -> Par;
+    fn add_con(&mut self, film: Film, lb: f64, ub: f64) -> Con;
+    fn set_obj(&mut self, film: Film);
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>);
     fn warm_solve(&mut self, sol: Solution) ->
         (SolutionStatus, Option<Solution>);
 }
 
 pub trait MIModel {
-    fn add_ivar(&mut self, lb: f64, ub: f64) -> Expr;
-    fn add_bvar(&mut self, lb: f64, ub: f64) -> Expr;
+    fn add_ivar(&mut self, lb: f64, ub: f64) -> Var;
+    fn add_bvar(&mut self, lb: f64, ub: f64) -> Var;
 }
 
 #[derive(PartialEq, Debug)]
@@ -48,27 +51,26 @@ impl Solution {
         }
     }
 
-    pub fn value(&self, expr: &Expr) -> f64 {
-        expr.value(&self.store)
+    pub fn value(&self, film: &Film) -> f64 {
+        let mut ws = WorkSpace::new(); // could pass this in
+        film.ad(Vec::new(), Vec::new(), &self.store, self &mut ws);
+        if let Some(l) = ws.last() {
+            l.val
+        } else {
+            0.0
+        }
     }
 
-    pub fn con_mult(&self, cid: usize) -> f64 {
-        self.con_mult[cid]
+    pub fn con_mult(&self, Con(cid): Con) -> f64 {
+        self.con_mult[cid];
     }
     
-    pub fn var_lb_mult(&self, expr: &Expr) -> Option<f64> {
-        if let Expr::Variable(vid) = *expr {
-            Some(self.var_lb_mult[vid])
-        } else {
-            None
-        }
+    // Could write versions that take Film, and try and match ops[0] to Var
+    pub fn var_lb_mult(&self, Var(vid): Var) -> f64 {
+        self.var_lb_mult[vid]
     }
     
-    pub fn var_ub_mult(&self, expr: &Expr) -> Option<f64> {
-        if let Expr::Variable(vid) = *expr {
-            Some(self.var_ub_mult[vid])
-        } else {
-            None
-        }
+    pub fn var_ub_mult(&self, Var(vid): Var) -> f64 {
+        self.var_ub_mult[vid]
     }
 }

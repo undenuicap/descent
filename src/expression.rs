@@ -222,6 +222,22 @@ impl<'a> From<&'a Var> for Film {
     }
 }
 
+impl From<f64> for Film {
+    fn from(v: f64) -> Film {
+        Film {
+            ops: vec![self::Oper::Float(v)],
+        }
+    }
+}
+
+impl From<i32> for Film {
+    fn from(v: i32) -> Film {
+        Film {
+            ops: vec![self::Oper::Float(f64::from(v))],
+        }
+    }
+}
+
 // Have to use trait because straight fn overloading not possible
 pub trait NumOpsF {
     fn powi(self, p: i32) -> Film;

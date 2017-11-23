@@ -1,7 +1,7 @@
 extern crate fnv;
 
-use expression::{Expr, Evaluate, Retrieve, ID};
-use model::{Model, Solution, SolutionStatus};
+use expression::{Film, FilmInfo, Retrieve, Var, Par, ID};
+use model::{Model, Solution, SolutionStatus, Con};
 use ipopt;
 use std::slice;
 //use std::collections::HashMap;
@@ -21,13 +21,15 @@ struct Parameter {
 }
 
 struct Constraint {
-    expr: Expr,
+    film: Film,
+    info: FilmInfo,
     lb: f64,
     ub: f64,
 }
 
 struct Objective {
-    expr: Expr,
+    film: Film,
+    info: FilmInfo,
 }
 
 struct ModelData {
@@ -69,7 +71,7 @@ impl IpoptModel {
                 vars: Vec::new(),
                 pars: Vec::new(),
                 cons: Vec::new(),
-                obj: Objective { expr: Expr::Integer(0) },
+                obj: Objective { film: Film::from(0.0), info: FilmInfo::new() },
             },
             cache: None,
             prob: None,
@@ -90,25 +92,31 @@ impl IpoptModel {
 
         let mut g_lb: Vec<f64> = Vec::new();
         let mut g_ub: Vec<f64> = Vec::new();
-        let mut j_sparsity: Vec<(usize, ID)> = Vec::new();
+        let mut j_sparsity: Vec<(ID, ID)> = Vec::new();
         let mut h_sparsity = HesSparsity::new();
 
-        for h in self.model.obj.expr.degree().higher {
-            h_sparsity.add_obj(h);
-        }
+        //for h in self.model.obj.expr.degree().higher {
+        //    h_sparsity.add_obj(h);
+        //}
+        h_sparsity.add_obj(&self.model.obj.info);
 
         for (cid, c) in self.model.cons.iter().enumerate() {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
+            // Maybe implement a Jac sparsity class
+            // Otherwise think we just need to loop through lin and nlin for
+            // each constraint, adding them 
+            // Another option would be to 
             // Not sorted, but might not matter
             for vid in c.expr.variables() {
                 j_sparsity.push((cid, vid));
             }
             //let var_vec: Vec<ID> = c.expr.variables().into_iter().collect();
             //j_sparsity.push(var_vec);
-            for h in c.expr.degree().higher {
-                h_sparsity.add_con(h, cid);
-            }
+            //for h in c.expr.degree().higher {
+            //    h_sparsity.add_con(h, cid);
+            //}
+            h_sparsity.add_con(&c.info);
         }
 
         let nele_hes = h_sparsity.len();
@@ -263,6 +271,14 @@ struct HesSparsity {
     sp: FnvHashMap<(ID, ID), HesEntry>,
 }
 
+// Want to do things differently.
+// First of all for each finfo quad and nquad, create vectors that give the
+// index into the hession for the corresponding entry.
+// Takes up more memory, otherwise we require a mapping local quad and nquad
+// entries into the global vars, and then looking up these vars index into the
+// hessian.
+// Assuming hessian ordering doesn't matter much, can building hessian and
+// work out index at same time.
 impl HesSparsity {
     fn new() -> HesSparsity {
         HesSparsity { sp: FnvHashMap::default() }
@@ -309,30 +325,33 @@ struct IpoptCBData<'a> {
 }
 
 impl Model for IpoptModel {
-    fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Expr {
+    fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var {
         self.prepared = false;
         let id = self.model.vars.len();
         self.model.vars.push(Variable { lb: lb, ub: ub, init: init });
-        Expr::Variable(id)
+        Var(id)
     }
 
-    fn add_par(&mut self, val: f64) -> Expr {
+    fn add_par(&mut self, val: f64) -> Par {
         self.prepared = false;
         let id = self.model.pars.len();
         self.model.pars.push(Parameter { val: val });
-        Expr::Parameter(id)
+        Par(id)
     }
 
-    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> usize {
+    fn add_con(&mut self, film: Film, lb: f64, ub: f64) -> Con {
         self.prepared = false;
         let id = self.model.cons.len();
-        self.model.cons.push(Constraint { expr: expr, lb: lb, ub: ub });
-        id
+        let finfo = film.get_info();
+        self.model.cons.push(Constraint { film: film, info: finfo,
+            lb: lb, ub: ub });
+        Con(id)
     }
 
-    fn set_obj(&mut self, expr: Expr) {
+    fn set_obj(&mut self, film: Film) {
         self.prepared = false;
-        self.model.obj = Objective { expr: expr };
+        let finfo = film.get_info();
+        self.model.obj = Objective { film: film, info: finfo };
     }
 
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
