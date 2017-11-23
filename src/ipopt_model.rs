@@ -1,6 +1,7 @@
 extern crate fnv;
 
-use expression::{Film, FilmInfo, Retrieve, Var, Par, ID};
+use expression::{Var, Par, ID};
+use expression::{Film, FilmInfo, Retrieve, WorkSpace, Column};
 use model::{Model, Solution, SolutionStatus, Con};
 use ipopt;
 use std::slice;
@@ -39,10 +40,17 @@ struct ModelData {
     obj: Objective,
 }
 
+#[derive(Debug, Default)]
 struct ModelCache {
     j_sparsity: Vec<(usize, ID)>, // jacobian sparsity
     h_sparsity: HesSparsity, // hessian sparsity
-    v_obj: Vec<ID>, // variables in objective
+    ws: WorkSpace,
+    con_sta: Vec<Column>,
+    obj_sta: Column,
+    con_dyn: Vec<Column>,
+    obj_dyn: Column,
+    con_ready: bool,
+    obj_ready: bool,
 }
 
 // Make sure don't implement copy or clone for this otherwise risk of double
@@ -95,35 +103,22 @@ impl IpoptModel {
         let mut j_sparsity: Vec<(ID, ID)> = Vec::new();
         let mut h_sparsity = HesSparsity::new();
 
-        //for h in self.model.obj.expr.degree().higher {
-        //    h_sparsity.add_obj(h);
-        //}
         h_sparsity.add_obj(&self.model.obj.info);
 
         for (cid, c) in self.model.cons.iter().enumerate() {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
-            // Maybe implement a Jac sparsity class
-            // Otherwise think we just need to loop through lin and nlin for
-            // each constraint, adding them 
-            // Another option would be to 
-            // Not sorted, but might not matter
-            for vid in c.expr.variables() {
-                j_sparsity.push((cid, vid));
+            for v in &c.info.lin {
+                j_sparsity.push((cid, v));
             }
-            //let var_vec: Vec<ID> = c.expr.variables().into_iter().collect();
-            //j_sparsity.push(var_vec);
-            //for h in c.expr.degree().higher {
-            //    h_sparsity.add_con(h, cid);
-            //}
+            for v in &c.info.nlin {
+                j_sparsity.push((cid, v));
+            }
             h_sparsity.add_con(&c.info);
         }
 
         let nele_hes = h_sparsity.len();
         let nele_jac = j_sparsity.len();
-        // Not sorted, don't suppose it matters
-        let v_obj: Vec<ID> = self.model.obj.expr.variables()
-            .into_iter().collect();
 
         // x_lb, x_ub, g_lb, g_ub are copied internally so don't need to keep
         let prob = unsafe {
@@ -146,7 +141,9 @@ impl IpoptModel {
         self.cache = Some(ModelCache {
             j_sparsity: j_sparsity,
             h_sparsity: h_sparsity,
-            v_obj: v_obj,
+            con_ready: false,
+            obj_ready: false,
+            ..Default::default(),
         });
         self.prepared = true;
     }
@@ -220,10 +217,23 @@ impl IpoptModel {
     // Should only be called after prepare
     fn ipopt_solve(&mut self, mut sol: Solution) ->
             (SolutionStatus, Option<Solution>) {
-        if let (&Some(ref cache), &Some(ref prob)) = (&self.cache, &self.prob) {
+        if let (&Some(ref mut cache), &Some(ref prob)) = (&self.cache, &self.prob) {
             self.form_init_solution(&mut sol);
             let ipopt_status;
             {
+                // Should do static calcs on cache
+                // Should put this is a function that returns a Column
+                cache.con_sta.clear();
+                for c in &self.model.cons {
+                    let mut col = Column::new();
+                    // Maybe use a NAN or zero store
+                    c.film.ad(&c.info.lin, Vec::new(), &zstore, &mut cache.ws);
+                    col.der1 = cache.ws.last().unwrap().der1.clone());
+                    c.film.ad(&c.info.nlin, &c.info.quad, &zstore, &mut cache.ws);
+                    col.der2 = cache.ws.last().unwrap().der2.clone());
+                    cache.con_sta.push(col);
+                }
+
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
                     cache: cache,
@@ -261,56 +271,49 @@ impl IpoptModel {
     }
 }
 
-struct HesEntry {
-    id: usize, // index into sparse matrix
-    obj: bool, // whether objective participates in entry
-    cons: Vec<usize>, // constraints that participate in entry
-}
-
+#[derive(Debug, Default)]
 struct HesSparsity {
-    sp: FnvHashMap<(ID, ID), HesEntry>,
+    sp: FnvHashMap<(ID, ID), usize>,
+    con_inds: Vec<Vec<usize>>,
+    obj_inds: Vec<usize>,
 }
 
-// Want to do things differently.
-// First of all for each finfo quad and nquad, create vectors that give the
-// index into the hession for the corresponding entry.
-// Takes up more memory, otherwise we require a mapping local quad and nquad
-// entries into the global vars, and then looking up these vars index into the
-// hessian.
-// Assuming hessian ordering doesn't matter much, can building hessian and
-// work out index at same time.
 impl HesSparsity {
     fn new() -> HesSparsity {
-        HesSparsity { sp: FnvHashMap::default() }
+        HesSparsity::default()
     }
 
-    fn get_entry(&mut self, eid: (ID, ID)) -> &mut HesEntry {
+    fn get_index(&mut self, eid: (ID, ID)) -> usize {
         let id = self.sp.len(); // incase need to create new
-        self.sp.entry(eid).or_insert_with(||
-                                           HesEntry { 
-                                               id: id,
-                                               obj: false,
-                                               cons: Vec::new(),
-                                           })
-        //if !self.sp.contains_key(&eid) {
-        //    let id = self.sp.len();
-        //    self.sp.insert(eid, HesEntry { 
-        //        id: id,
-        //        obj: false,
-        //        cons: Vec::new(),
-        //    });
-        //}
-        //self.sp.get_mut(&eid).unwrap()
+        self.sp.entry(eid).or_insert(id)
     }
 
-    fn add_con(&mut self, eid: (ID, ID), cid: usize) {
-        let ent = self.get_entry(eid);
-        ent.cons.push(cid);
+    fn add_con(&mut self, info: &FilmInfo) {
+        let mut v = Vec::new();
+        for &(li1, li2) in &info.quad {
+            // get the non-local variable ids
+            let p = (info.nlin[li1], info.nlin[li2]);
+            v.push(self.get_index(p));
+        }
+        for &(li1, li2) in &info.nquad {
+            // get the non-local variable ids
+            let p = (info.nlin[li1], info.nlin[li2]);
+            v.push(self.get_index(p));
+        }
+        self.con_inds.push(v);
     }
 
-    fn add_obj(&mut self, eid: (ID, ID)) {
-        let ent = self.get_entry(eid);
-        ent.obj = true;
+    fn add_obj(&mut self, info: &FilmInfo) {
+        for &(li1, li2) in &info.quad {
+            // get the non-local variable ids
+            let p = (info.nlin[li1], info.nlin[li2]);
+            self.obj_inds.push(self.get_index(p));
+        }
+        for &(li1, li2) in &info.nquad {
+            // get the non-local variable ids
+            let p = (info.nlin[li1], info.nlin[li2]);
+            self.obj_inds.push(self.get_index(p));
+        }
     }
 
     fn len(&self) -> usize {
