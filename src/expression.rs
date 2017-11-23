@@ -96,7 +96,7 @@ impl Deg {
         deg.lin = self.lin.union(&(other.lin)).cloned().collect();
         deg.nlin = self.nlin.union(&(other.nlin)).cloned().collect();
         deg.quad = self.quad.union(&(other.quad)).cloned().collect();
-        deg.nquad = self.quad.union(&(other.nquad)).cloned().collect();
+        deg.nquad = self.nquad.union(&(other.nquad)).cloned().collect();
 
         deg.lin = deg.lin.difference(&(deg.nlin)).cloned().collect();
         deg.quad = deg.quad.difference(&(deg.nquad)).cloned().collect();
@@ -206,6 +206,56 @@ enum Oper {
     Float(f64),
 }
 
+impl From<Var> for Film {
+    fn from(v: Var) -> Film {
+        Film {
+            ops: vec![self::Oper::Variable(v)],
+        }
+    }
+}
+
+impl<'a> From<&'a Var> for Film {
+    fn from(v: &'a Var) -> Film {
+        Film {
+            ops: vec![self::Oper::Variable(v.clone())],
+        }
+    }
+}
+
+// Have to use trait because straight fn overloading not possible
+pub trait NumOpsF {
+    fn powi(self, p: i32) -> Film;
+    fn sin(self) -> Film;
+    fn cos(self) -> Film;
+}
+
+impl NumOpsF for Film {
+    fn powi(mut self, p: i32) -> Film {
+        // When empty don't do anything
+        if !self.ops.is_empty() {
+            self.add_op(Oper::Pow(p));
+        }
+        self
+    }
+
+    fn sin(mut self) -> Film {
+        // When empty don't do anything
+        if !self.ops.is_empty() {
+            self.add_op(Oper::Sin);
+        }
+        self
+    }
+
+    fn cos(mut self) -> Film {
+        // When empty don't do anything
+        if !self.ops.is_empty() {
+            self.add_op(Oper::Cos);
+        }
+        self
+    }
+}
+
+
 #[derive(Debug, Clone, Default)]
 pub struct Column {
     val: f64,
@@ -221,10 +271,6 @@ impl Column {
 
 pub type WorkSpace = Vec<Column>;
 
-// Might want to pass this in chunks to ad(), so that can use same code to
-// get values for lin and quad once.
-// When doing this should consider setting all get_var accesses to nan.
-// Can then check results to make sure that we haven't touched any variables.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FilmInfo {
     // Linear and quadratic respective first and second derivatives only need
@@ -440,6 +486,27 @@ impl Film {
             Some(d) => FilmInfo::from(d),
             None => FilmInfo::new(),
         }
+    }
+
+    fn add_op(&mut self, op: Oper) {
+        self.ops.push(op);
+    }
+
+    // Wouldn't be required if we instead use relative values
+    fn add_offset(&mut self, n: usize) {
+        use self::Oper::*;
+        for op in self.ops.iter_mut() {
+            match *op {
+                Add(ref mut j) => *j = *j + n,
+                Mul(ref mut j) => *j = *j + n,
+                _ => (),
+            }
+        }
+    }
+
+    fn append(&mut self, mut other: Film) {
+        other.add_offset(self.ops.len());
+        self.ops.append(&mut other.ops);
     }
 }
 
@@ -1443,6 +1510,169 @@ impl std::ops::Mul<Tape> for Tape {
     }
 }
 
+macro_rules! b_ops_film {
+    ( $U:ty, $C:expr ) => {
+        impl std::ops::Add<$U> for Film {
+            type Output = Film;
+
+            fn add(mut self, other: $U) -> Film {
+                // Assuming add on empty Film is like add by 0.0
+                if self.ops.is_empty() {
+                    self.add_op($C(other));
+                } else {
+                    let n = self.ops.len();
+                    self.add_op($C(other));
+                    self.add_op(Oper::Add(n - 1));
+                }
+                self
+            }
+        }
+
+        impl std::ops::Add<Film> for $U {
+            type Output = Film;
+
+            fn add(self, mut other: Film) -> Film {
+                // Assuming add on empty Film is like add by 0.0
+                if other.ops.is_empty() {
+                    other.add_op($C(self));
+                } else {
+                    let n = other.ops.len();
+                    other.add_op($C(self));
+                    other.add_op(Oper::Add(n - 1));
+                }
+                other
+            }
+        }
+
+        impl std::ops::Mul<$U> for Film {
+            type Output = Film;
+
+            fn mul(mut self, other: $U) -> Film {
+                // Assuming mul on empty Film is like mul by 1.0
+                if self.ops.is_empty() {
+                    self.add_op($C(other));
+                } else {
+                    let n = self.ops.len();
+                    self.add_op($C(other));
+                    self.add_op(Oper::Mul(n - 1));
+                }
+                self
+            }
+        }
+
+        impl std::ops::Mul<Film> for $U {
+            type Output = Film;
+
+            fn mul(self, mut other: Film) -> Film {
+                // Assuming mul on empty Film is like mul by 1.0
+                if other.ops.is_empty() {
+                    other.add_op($C(self));
+                } else {
+                    let n = other.ops.len();
+                    other.add_op($C(self));
+                    other.add_op(Oper::Mul(n - 1));
+                }
+                other
+            }
+        }
+
+        impl std::ops::Sub<$U> for Film {
+            type Output = Film;
+
+            fn sub(mut self, other: $U) -> Film {
+                // Assuming sub on empty Film is like sub with 0.0
+                if self.ops.is_empty() {
+                    self.add_op($C(other));
+                    self.add_op(Oper::Neg);
+                } else {
+                    let n = self.ops.len();
+                    self.add_op($C(other));
+                    self.add_op(Oper::Neg);
+                    self.add_op(Oper::Add(n - 1));
+                }
+                self
+            }
+        }
+
+        impl std::ops::Sub<Film> for $U {
+            type Output = Film;
+
+            fn sub(self, mut other: Film) -> Film {
+                // Assuming sub on empty Film is like sub with 0.0
+                if other.ops.is_empty() {
+                    other.add_op($C(self));
+                } else {
+                    let n = other.ops.len();
+                    other.add_op(Oper::Neg);
+                    other.add_op($C(self));
+                    other.add_op(Oper::Add(n)); // need to grab Neg value
+                }
+                other
+            }
+        }
+    };
+}
+
+b_ops_film!(f64, Oper::Float);
+b_ops_film!(Var, Oper::Variable);
+b_ops_film!(Par, Oper::Parameter);
+
+impl std::ops::Add<Film> for Film {
+    type Output = Film;
+
+    fn add(mut self, mut other: Film) -> Film {
+        // Assuming add on empty Film is like add by 0.0
+        if self.ops.is_empty() {
+            other
+        } else if other.ops.is_empty() {
+            self
+        } else {
+            let n = self.ops.len();
+            self.append(other);
+            self.add_op(Oper::Add(n - 1));
+            self
+        }
+    }
+}
+
+impl std::ops::Sub<Film> for Film {
+    type Output = Film;
+
+    fn sub(mut self, mut other: Film) -> Film {
+        // Assuming sub on empty Film is like add by 0.0
+        if self.ops.is_empty() {
+            other.add_op(Oper::Neg); // negate second argument
+            other
+        } else if other.ops.is_empty() {
+            self
+        } else {
+            let n = self.ops.len();
+            self.append(other);
+            self.add_op(Oper::Neg);
+            self.add_op(Oper::Add(n - 1));
+            self
+        }
+    }
+}
+
+impl std::ops::Mul<Film> for Film {
+    type Output = Film;
+
+    fn mul(mut self, mut other: Film) -> Film {
+        // Assuming mul on empty Film is like mul by 1.0
+        if self.ops.is_empty() {
+            other
+        } else if other.ops.is_empty() {
+            self
+        } else {
+            let n = self.ops.len();
+            self.append(other);
+            self.add_op(Oper::Mul(n - 1));
+            self
+        }
+    }
+}
+
 pub struct Store {
     pub vars: Vec<f64>,
     pub pars: Vec<f64>,
@@ -1636,7 +1866,7 @@ mod tests {
     #[bench]
     fn quad_construct(b: &mut test::Bencher) {
         use expression::Expr::*;
-        let n = 500;
+        let n = 50;
         let mut xs = Vec::new();
         let mut store = Store::new();
         for i in 0..n {
@@ -1653,7 +1883,7 @@ mod tests {
     #[bench]
     fn quad_deriv1(b: &mut test::Bencher) {
         use expression::Expr::*;
-        let n = 100;
+        let n = 50;
         let mut xs = Vec::new();
         let mut store = Store::new();
         for i in 0..n {
@@ -1735,7 +1965,7 @@ mod tests {
     #[bench]
     fn tape_quad_deriv1(b: &mut test::Bencher) {
         use expression::{Var, Tape};
-        let n = 100;
+        let n = 50;
         let mut xs = Vec::new();
         let mut store = Store::new();
         for i in 0..n {
@@ -1824,7 +2054,6 @@ mod tests {
         film.ops.push(Variable(Var(0)));
         film.ops.push(Add(4));
 
-        let mut ws = WorkSpace::new();
         let finfo = film.get_info();
 
         assert_eq!(finfo, FilmInfo {
@@ -1833,5 +2062,93 @@ mod tests {
             quad: vec![(0, 0)],
             nquad: vec![],
         }); 
+    }
+
+    #[test]
+    fn film_ops() {
+        use expression::Oper::*;
+        use expression::Var;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.pars.push(4.0);
+
+        let mut f = Film::new();
+        f = f + 5.0;
+        f = 5.0 + f;
+        f = Var(0) + f;
+        f = f*Par(0);
+
+        let finfo = f.get_info();
+
+        let mut ws = WorkSpace::new();
+        //println!("{:?}", finfo);
+        //println!("{:?}", f);
+        f.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
+
+        assert_eq!(ws.len(), 7);
+        assert_eq!(ws[6].val, 60.0);
+        assert_eq!(ws[6].der1[0], 4.0);
+    }
+
+    #[bench]
+    fn film_quad_deriv1(b: &mut test::Bencher) {
+        use expression::{Var, Film};
+        let n = 50;
+        let mut xs = Vec::new();
+        let mut store = Store::new();
+        for i in 0..n {
+            xs.push(Var(i));
+            store.vars.push(0.5);
+        }
+        let mut e = Film::new();
+        for x in &xs {
+            e = e + 3.0*(Film::from(x) - 1.0).powi(2) + 5.0;
+        }
+        let mut ws = WorkSpace::new();
+        //println!("{:?}", e);
+        let finfo = e.get_info();
+        //println!("{:?}", finfo);
+        assert_eq!(finfo.lin.len(), 0);
+        assert_eq!(finfo.nlin.len(), n);
+        assert_eq!(finfo.quad.len(), n);
+        assert_eq!(finfo.nquad.len(), 0);
+        b.iter(|| {
+            //e.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
+            //e.ad(&finfo.nlin, &finfo.quad, &store, &mut ws);
+            e.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+        });
+        assert_eq!(ws.last().unwrap().der1.len(), n);
+        assert_eq!(ws.last().unwrap().der2.len(), 0);
+    }
+
+    #[bench]
+    fn film_quad_all(b: &mut test::Bencher) {
+        use expression::{Var, Film};
+        let n = 50;
+        let mut xs = Vec::new();
+        let mut store = Store::new();
+        for i in 0..n {
+            xs.push(Var(i));
+            store.vars.push(0.5);
+        }
+        let mut e = Film::new();
+        for x in &xs {
+            e = e + 3.0*(Film::from(x) - 1.0).powi(2) + 5.0;
+        }
+        let mut ws = WorkSpace::new();
+        //println!("{:?}", e);
+        let finfo = e.get_info();
+        //println!("{:?}", finfo);
+        assert_eq!(finfo.lin.len(), 0);
+        assert_eq!(finfo.nlin.len(), n);
+        assert_eq!(finfo.quad.len(), n);
+        assert_eq!(finfo.nquad.len(), 0);
+        b.iter(|| {
+            //e.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
+            e.ad(&finfo.nlin, &finfo.quad, &store, &mut ws);
+            //e.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+        });
+        assert_eq!(ws.last().unwrap().der1.len(), n);
+        assert_eq!(ws.last().unwrap().der2.len(), n);
     }
 }
