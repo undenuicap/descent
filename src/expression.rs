@@ -1,5 +1,5 @@
 use std;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::cmp::max;
 
 pub type ID = usize;
@@ -46,6 +46,150 @@ enum Operation {
     // MulFloat(f64)
 }
 
+// Contract: lin and nlin must be disjoint
+// Contract: quad and nquad must be disjoint
+// Contract: IDs in pairs must be ordered
+// Contract: all IDs in quad and nquad must be in nlin
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct Deg {
+    lin: HashSet<ID>,
+    nlin: HashSet<ID>,
+    quad: HashSet<(ID, ID)>,
+    nquad: HashSet<(ID, ID)>,
+}
+
+fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>,
+             target: &mut HashSet<(ID, ID)>)  {
+    for &id1 in id1s {
+        for &id2 in id2s {
+            target.insert(order(id1, id2));
+        }
+    }
+}
+
+impl Deg {
+    pub fn new() -> Deg {
+        Deg::default()
+    }
+
+    pub fn with_id(id: ID) -> Deg {
+        let mut d = Deg::default();
+        d.lin.insert(id);
+        d
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lin.is_empty() && self.quad.is_empty() && self.nquad.is_empty()
+    }
+
+    // Only should need to add an ID to a brand new Deg (see with_id above)
+    //pub fn add_id(&self, id: ID) -> Deg {
+    //    let mut c = self.clone();
+    //    if !self.nlin.contains(id) {
+    //        c.lin.insert(id);
+    //    }
+    //    c
+    //}
+
+    pub fn union(&self, other: &Deg) -> Deg {
+        let mut deg = Deg::new();
+        deg.lin = self.lin.union(&(other.lin)).cloned().collect();
+        deg.nlin = self.nlin.union(&(other.nlin)).cloned().collect();
+        deg.quad = self.quad.union(&(other.quad)).cloned().collect();
+        deg.nquad = self.quad.union(&(other.nquad)).cloned().collect();
+
+        deg.lin = deg.lin.difference(&(deg.nlin)).cloned().collect();
+        deg.quad = deg.quad.difference(&(deg.nquad)).cloned().collect();
+        deg
+    }
+
+    pub fn cross(&self, other: &Deg) -> Deg {
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            // If here, both sides have at least one entry.
+            // Therefore all promoted one level.
+            let mut deg = Deg::new();
+
+            // lin will empty into nlin
+            for &id in &self.lin {
+                deg.nlin.insert(id);
+            }
+
+            for &id in &other.lin {
+                deg.nlin.insert(id);
+            }
+
+            // quad and nquad will transfer over to nquad
+            for &p in &self.nquad {
+                deg.nquad.insert(p);
+            }
+
+            for &p in &other.nquad {
+                deg.nquad.insert(p);
+            }
+
+            for &p in &self.quad {
+                deg.nquad.insert(p);
+            }
+
+            for &p in &other.quad {
+                deg.nquad.insert(p);
+            }
+
+            // contract ensures new quad values do not appear in nquad
+            cross_ids(&(self.lin), &(other.lin), &mut (deg.quad));
+            cross_ids(&(self.lin), &(other.nlin), &mut (deg.nquad));
+            cross_ids(&(self.nlin), &(other.lin), &mut (deg.nquad));
+            cross_ids(&(self.nlin), &(other.nlin), &mut (deg.nquad));
+
+            deg
+        }
+    }
+
+    pub fn highest(&self) -> Deg {
+        // Promote all combinations to highest
+        let mut deg = Deg::new();
+
+        deg.nlin = self.lin.union(&(self.nlin)).cloned().collect();
+
+        // Could same time here due to symmetry...
+        cross_ids(&(self.nlin), &(self.nlin), &mut (deg.nquad));
+
+        deg
+    }
+}
+
+impl From<Deg> for FilmInfo {
+    fn from(d: Deg) -> FilmInfo {
+        let mut info = FilmInfo::new();
+        info.lin = d.lin.into_iter().collect();
+        info.nlin = d.nlin.into_iter().collect();
+        info.lin.sort();
+        info.nlin.sort();
+
+        let mut id_to_ind: HashMap<ID, usize> = HashMap::new();
+        for (i, &id) in info.nlin.iter().enumerate() {
+            id_to_ind.insert(id, i);
+        }
+
+        // Converting from variable IDs to local indices into nlin
+        for (id1, id2) in d.quad.into_iter() {
+            info.quad.push((id_to_ind[&id1], id_to_ind[&id2]));
+        }
+
+        for (id1, id2) in d.nquad.into_iter() {
+            info.nquad.push((id_to_ind[&id1], id_to_ind[&id2]));
+        }
+
+        info.quad.sort();
+        info.nquad.sort();
+        info
+    }
+}
+
 // Version where implicitly use the value to the left
 // Must start with terminal value for this to be valid
 // Index must be less than index of entry in tape
@@ -81,12 +225,12 @@ pub type WorkSpace = Vec<Column>;
 // get values for lin and quad once.
 // When doing this should consider setting all get_var accesses to nan.
 // Can then check results to make sure that we haven't touched any variables.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FilmInfo {
     // Linear and quadratic respective first and second derivatives only need
     // to be computed once on parameter change.
-    lin: Vec<Var>, // const derivative
-    nlin: Vec<Var>, // non-const derivative
+    lin: Vec<ID>, // const derivative
+    nlin: Vec<ID>, // non-const derivative
     // Below the usize are indices into nlin, a variable representation
     // that is local
     quad: Vec<(usize, usize)>, // const second derivative
@@ -109,7 +253,7 @@ impl Film {
         Film::default()
     }
 
-    fn ad(&self, d1: &Vec<Var>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
+    fn ad(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
             ws: &mut WorkSpace) {
         use self::Oper::*;
         use self::{Var, Par};
@@ -219,7 +363,7 @@ impl Film {
                 },
                 Variable(Var(id)) => {
                     cur.val = ret.get_var(id);
-                    for (k, &Var(did)) in d1.iter().enumerate() {
+                    for (k, &did) in d1.iter().enumerate() {
                         cur.der1[k] = if id == did { 1.0 } else { 0.0 };
                     }
                     for k in 0..(d2.len()) {
@@ -250,26 +394,52 @@ impl Film {
 
     fn get_info(&self) -> FilmInfo {
         use self::Oper::*;
-        use self::{Var, Par};
-        let mut lin: Vec<HashSet<ID>> = Vec::new();
-        let mut quad: Vec<HashSet<(ID, ID)>> = Vec::new();
-        let mut nquad: Vec<HashSet<(ID, ID)>> = Vec::new();
+        use self::Var;
+        let mut degs: Vec<Deg> = Vec::new();
         for (i, op) in self.ops.iter().enumerate() {
-            match *op {
+            let d = match *op {
                 Add(j) => {
-                    let l = lin[i - 1].union(&lin[j]).cloned().collect();
-                    lin.push(l);
-                    let q = quad[i - 1].union(&quad[j]).cloned().collect();
-                    quad.push(q);
-                    let nq = nquad[i - 1].union(&nquad[j]).cloned().collect();
-                    nquad.push(nq);
+                    degs[i - 1].union(&degs[j])
+                },
+                Mul(j) => {
+                    degs[i - 1].cross(&degs[j])
+                },
+                Neg => {
+                    degs[i - 1].clone()
+                },
+                Pow(p) => {
+                    match p {
+                        0 => {
+                            Deg::new()
+                        },
+                        1 => {
+                            degs[i - 1].clone()
+                        },
+                        2 => {
+                            degs[i - 1].cross(&degs[i - 1])
+                        },
+                        _ => {
+                            degs[i - 1].highest()
+                        },
+                    }
+                },
+                Sin | Cos => {
+                    degs[i - 1].highest()
+                },
+                Variable(Var(id)) => {
+                    Deg::with_id(id)
                 },
                 _ => {
+                    Deg::new()
                 },
-            }
+            };
+            degs.push(d);
         }
-        let mut info = FilmInfo::new();
-        info
+
+        match degs.pop() {
+            Some(d) => FilmInfo::from(d),
+            None => FilmInfo::new(),
+        }
     }
 }
 
@@ -1607,8 +1777,8 @@ mod tests {
 
         let mut ws = WorkSpace::new();
         let mut finfo = FilmInfo::new();
-        finfo.lin.push(Var(0));
-        finfo.nlin.push(Var(1));
+        finfo.lin.push(0);
+        finfo.nlin.push(1);
         finfo.quad.push((0, 0)); // the first entry in nlin
 
         // Get constant first derivatives
@@ -1634,5 +1804,34 @@ mod tests {
         assert_eq!(ws.len(), 7);
         assert_eq!(ws[6].val, 14.0);
         assert_eq!(ws[6].der1[0], 6.0); // Var(1)
+    }
+
+    #[test]
+    fn film_degree() {
+        use expression::Oper::*;
+        use expression::Var;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.vars.push(4.0);
+
+        let mut film = Film::new();
+        // v0 + (1.0 - v1)^2
+        film.ops.push(Float(1.0));
+        film.ops.push(Variable(Var(1)));
+        film.ops.push(Neg);
+        film.ops.push(Add(0));
+        film.ops.push(Pow(2));
+        film.ops.push(Variable(Var(0)));
+        film.ops.push(Add(4));
+
+        let mut ws = WorkSpace::new();
+        let finfo = film.get_info();
+
+        assert_eq!(finfo, FilmInfo {
+            lin: vec![0],
+            nlin: vec![1],
+            quad: vec![(0, 0)],
+            nquad: vec![],
+        }); 
     }
 }
