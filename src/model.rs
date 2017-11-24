@@ -7,7 +7,7 @@ use expression::{Film, Store, ID, Var, Par, WorkSpace};
 //}
 
 #[derive(Debug, Clone, Copy)]
-struct Con(ID); // Constraint ID
+pub struct Con(pub ID); // Constraint ID
 
 pub trait Model {
     fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var;
@@ -53,7 +53,7 @@ impl Solution {
 
     pub fn value(&self, film: &Film) -> f64 {
         let mut ws = WorkSpace::new(); // could pass this in
-        film.ad(Vec::new(), Vec::new(), &self.store, self &mut ws);
+        film.ad(&Vec::new(), &Vec::new(), &self.store, &mut ws);
         if let Some(l) = ws.last() {
             l.val
         } else {
@@ -62,7 +62,7 @@ impl Solution {
     }
 
     pub fn con_mult(&self, Con(cid): Con) -> f64 {
-        self.con_mult[cid];
+        self.con_mult[cid]
     }
     
     // Could write versions that take Film, and try and match ops[0] to Var

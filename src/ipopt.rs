@@ -91,19 +91,20 @@ type EvalHCB = extern fn(
         values: *mut Number,
         user_data: UserDataPtr) -> Bool;
 
-//type IntermediateCB = extern fn(
-//        alg_mod: Index,
-//        iter_count: Index,
-//        obj_value: Number,
-//        inf_pr: Number,
-//        inf_du: Number,
-//        mu: Number,
-//        d_norm: Number,
-//        regularization_size: Number,
-//        alpha_du: Number,
-//        alpha_pr: Number,
-//        ls_trials: Number,
-//        user_data: UserDataPtr) -> Bool;
+type IntermediateCB = extern fn(
+        alg_mod: Index,
+        iter_count: Index,
+        obj_value: Number,
+        inf_pr: Number,
+        inf_du: Number,
+        mu: Number,
+        d_norm: Number,
+        regularization_size: Number,
+        alpha_du: Number,
+        alpha_pr: Number,
+        ls_trials: Number,
+        user_data: UserDataPtr) -> Bool;
+
 
 #[link(name = "ipopt")]
 extern {
@@ -138,6 +139,9 @@ extern {
     pub fn AddIpoptIntOption(ipopt_problem: IpoptProblem,
                          keyword: *const c_char,
                          val: Int) -> Bool;
+
+    pub fn SetIntermediateCallback(ipopt_problem: IpoptProblem,
+					     intermediate_cb: IntermediateCB) -> Bool;
 
     pub fn IpoptSolve(
             ipopt_problem: IpoptProblem,

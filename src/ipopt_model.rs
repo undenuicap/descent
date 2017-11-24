@@ -10,6 +10,7 @@ use self::fnv::FnvHashMap;
 use std::ptr;
 use std::ffi::CString;
 use std::f64;
+use std::mem;
 
 struct Variable {
     lb: f64,
@@ -45,11 +46,11 @@ struct ModelCache {
     j_sparsity: Vec<(usize, ID)>, // jacobian sparsity
     h_sparsity: HesSparsity, // hessian sparsity
     ws: WorkSpace,
-    con_sta: Vec<Column>,
-    obj_sta: Column,
-    con_dyn: Vec<Column>,
-    obj_dyn: Column,
-    con_ready: bool,
+    cons_const: Vec<Column>,
+    obj_const: Column,
+    cons: Vec<Column>,
+    obj: Column,
+    cons_ready: bool,
     obj_ready: bool,
 }
 
@@ -72,6 +73,22 @@ struct IpoptModel {
     prepared: bool, // problem prepared
 }
 
+fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
+             ws: &mut WorkSpace) -> Column {
+    let mut col = Column::new();
+    film.ad(&info.lin, &Vec::new(), store, ws);
+    col.der1 = ws.last().unwrap().der1.clone();
+    film.ad(&info.nlin, &info.quad, store, ws);
+    col.der2 = ws.last().unwrap().der2.clone();
+    col
+}
+
+fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
+             ws: &mut WorkSpace, col: &mut Column) {
+    film.ad(&info.nlin, &info.nquad, store, ws);
+    mem::swap(col, ws.last_mut().unwrap());
+}
+
 impl IpoptModel {
     fn new() -> IpoptModel {
         IpoptModel {
@@ -88,6 +105,14 @@ impl IpoptModel {
     }
 
     fn prepare(&mut self) {
+        // Have a problem if Film is empty.  Don't know how to easy enforce
+        // a non-empty Film.  Could verify them, but then makes interface
+        // clumbsy.  Could panic late like here.
+        // Hrmm should possibly verify at the prepare phase.  Then return solve
+        // error if things go bad.
+        // Other option is to check as added to model (so before FilmInfo is
+        // called).  Ideally should design interface/operations on FilmInfo
+        // so that an empty/invalid value is not easily created/possible.
         if self.prepared && self.cache.is_some() || self.prob.is_some() {
             return; // If still valid don't prepare again
         }
@@ -108,24 +133,26 @@ impl IpoptModel {
         for (cid, c) in self.model.cons.iter().enumerate() {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
-            for v in &c.info.lin {
+            for &v in &c.info.lin {
                 j_sparsity.push((cid, v));
             }
-            for v in &c.info.nlin {
+            for &v in &c.info.nlin {
                 j_sparsity.push((cid, v));
             }
             h_sparsity.add_con(&c.info);
         }
 
+        let nvars = self.model.vars.len();
+        let ncons = self.model.cons.len();
         let nele_hes = h_sparsity.len();
         let nele_jac = j_sparsity.len();
 
         // x_lb, x_ub, g_lb, g_ub are copied internally so don't need to keep
         let prob = unsafe {
-            ipopt::CreateIpoptProblem(self.model.vars.len() as i32,
+            ipopt::CreateIpoptProblem(nvars as i32,
                                       x_lb.as_ptr(),
                                       x_ub.as_ptr(),
-                                      self.model.cons.len() as i32,
+                                      ncons as i32,
                                       g_lb.as_ptr(),
                                       g_ub.as_ptr(),
                                       nele_jac as i32,
@@ -137,14 +164,21 @@ impl IpoptModel {
                                       g_jac,
                                       l_hess)
         };
+
+        // Not sure if should be checking return value
+        unsafe { ipopt::SetIntermediateCallback(prob, intermediate); };
+
+        let mut cache = ModelCache {
+                j_sparsity: j_sparsity,
+                h_sparsity: h_sparsity,
+                cons_ready: false,
+                obj_ready: false,
+                ..Default::default()
+            };
+        cache.cons.resize(ncons, Column::new());
+
         self.prob = Some(IpoptProblem { prob: prob });
-        self.cache = Some(ModelCache {
-            j_sparsity: j_sparsity,
-            h_sparsity: h_sparsity,
-            con_ready: false,
-            obj_ready: false,
-            ..Default::default(),
-        });
+        self.cache = Some(cache);
         self.prepared = true;
     }
 
@@ -217,29 +251,35 @@ impl IpoptModel {
     // Should only be called after prepare
     fn ipopt_solve(&mut self, mut sol: Solution) ->
             (SolutionStatus, Option<Solution>) {
-        if let (&Some(ref mut cache), &Some(ref prob)) = (&self.cache, &self.prob) {
-            self.form_init_solution(&mut sol);
+        self.form_init_solution(&mut sol);
+
+        if let (&mut Some(ref mut cache), &Some(ref prob)) =
+                (&mut self.cache, &self.prob) {
             let ipopt_status;
             {
-                // Should do static calcs on cache
-                // Should put this is a function that returns a Column
-                cache.con_sta.clear();
+                // Just passing it the solution store (in theory var values
+                // should not affect the values).
+                cache.cons_const.clear();
                 for c in &self.model.cons {
-                    let mut col = Column::new();
-                    // Maybe use a NAN or zero store
-                    c.film.ad(&c.info.lin, Vec::new(), &zstore, &mut cache.ws);
-                    col.der1 = cache.ws.last().unwrap().der1.clone());
-                    c.film.ad(&c.info.nlin, &c.info.quad, &zstore, &mut cache.ws);
-                    col.der2 = cache.ws.last().unwrap().der2.clone());
-                    cache.con_sta.push(col);
+                    cache.cons_const.push(const_col(&c.film, &c.info,
+                                                   &sol.store, &mut cache.ws));
                 }
+
+                cache.obj_const = const_col(&self.model.obj.film,
+                                            &self.model.obj.info,
+                                            &sol.store, &mut cache.ws);
+
+                cache.cons_ready = false;
+                cache.obj_ready = false;
 
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
                     cache: cache,
                     pars: &sol.store.pars,
                 };
+
                 let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
+
                 ipopt_status = unsafe {
                     ipopt::IpoptSolve(prob.prob,
                                       sol.store.vars.as_mut_ptr(),
@@ -274,7 +314,7 @@ impl IpoptModel {
 #[derive(Debug, Default)]
 struct HesSparsity {
     sp: FnvHashMap<(ID, ID), usize>,
-    con_inds: Vec<Vec<usize>>,
+    cons_inds: Vec<Vec<usize>>,
     obj_inds: Vec<usize>,
 }
 
@@ -285,7 +325,7 @@ impl HesSparsity {
 
     fn get_index(&mut self, eid: (ID, ID)) -> usize {
         let id = self.sp.len(); // incase need to create new
-        self.sp.entry(eid).or_insert(id)
+        *self.sp.entry(eid).or_insert(id)
     }
 
     fn add_con(&mut self, info: &FilmInfo) {
@@ -300,19 +340,19 @@ impl HesSparsity {
             let p = (info.nlin[li1], info.nlin[li2]);
             v.push(self.get_index(p));
         }
-        self.con_inds.push(v);
+        self.cons_inds.push(v);
     }
 
     fn add_obj(&mut self, info: &FilmInfo) {
         for &(li1, li2) in &info.quad {
             // get the non-local variable ids
-            let p = (info.nlin[li1], info.nlin[li2]);
-            self.obj_inds.push(self.get_index(p));
+            let ind = self.get_index((info.nlin[li1], info.nlin[li2]));
+            self.obj_inds.push(ind);
         }
         for &(li1, li2) in &info.nquad {
             // get the non-local variable ids
-            let p = (info.nlin[li1], info.nlin[li2]);
-            self.obj_inds.push(self.get_index(p));
+            let ind = self.get_index((info.nlin[li1], info.nlin[li2]));
+            self.obj_inds.push(ind);
         }
     }
 
@@ -323,7 +363,7 @@ impl HesSparsity {
 
 struct IpoptCBData<'a> {
     model: &'a ModelData,
-    cache: &'a ModelCache,
+    cache: &'a mut ModelCache,
     pars: &'a Vec<f64>,
 }
 
@@ -386,13 +426,40 @@ impl<'a> Retrieve for Store<'a> {
     }
 }
 
+fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
+    if !cb_data.cache.obj_ready {
+        dynam_col(&cb_data.model.obj.film,
+                  &cb_data.model.obj.info,
+                  store,
+                  &mut cb_data.cache.ws,
+                  &mut cb_data.cache.obj);
+        cb_data.cache.obj_ready = true;
+    }
+}
+
+fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
+    if !cb_data.cache.cons_ready {
+        for (i, c) in cb_data.model.cons.iter().enumerate() {
+            dynam_col(&c.film,
+                      &c.info,
+                      store,
+                      &mut cb_data.cache.ws,
+                      &mut cb_data.cache.cons[i]);
+        }
+        cb_data.cache.cons_ready = true;
+    }
+}
+
+
 extern fn f(
         n: ipopt::Index,
         x: *const ipopt::Number,
         _new_x: ipopt::Bool,
         obj_value: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+    let cb_data: &mut IpoptCBData = unsafe {
+        &mut *(user_data as *mut IpoptCBData)
+    };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -403,8 +470,9 @@ extern fn f(
         pars: cb_data.pars,
     };
 
+    solve_obj(cb_data, &store);
     let value = unsafe { &mut *obj_value };
-    *value = cb_data.model.obj.expr.value(&store);
+    *value = cb_data.cache.obj.val;
     1
 }
 
@@ -414,7 +482,9 @@ extern fn f_grad(
         _new_x: ipopt::Bool,
         grad_f: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+    let cb_data: &mut IpoptCBData = unsafe {
+        &mut *(user_data as *mut IpoptCBData)
+    };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -425,11 +495,12 @@ extern fn f_grad(
         pars: cb_data.pars,
     };
 
+    solve_obj(cb_data, &store);
     let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
-    // Might need to zero out memory for other entries
-    for vid in &cb_data.cache.v_obj {
-        values[*vid] = cb_data.model.obj.expr.deriv(&store, *vid).1;
-    }
+    let sp = cb_data.cache.obj_const.der1.len();
+    let ed = sp + cb_data.cache.obj.der1.len();
+    values[0..sp].copy_from_slice(&cb_data.cache.obj_const.der1);
+    values[sp..ed].copy_from_slice(&cb_data.cache.obj.der1);
     1
 }
 
@@ -440,7 +511,9 @@ extern fn g(
         m: ipopt::Index,
         g: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+    let cb_data: &mut IpoptCBData = unsafe {
+        &mut *(user_data as *mut IpoptCBData)
+    };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -454,10 +527,11 @@ extern fn g(
         pars: cb_data.pars,
     };
 
+    solve_cons(cb_data, &store);
     let values = unsafe { slice::from_raw_parts_mut(g, m as usize) };
 
-    for (cid, c) in cb_data.model.cons.iter().enumerate() {
-        values[cid] = c.expr.value(&store);
+    for (i, col) in cb_data.cache.cons.iter().enumerate() {
+        values[i] = col.val;
     }
     1
 }
@@ -472,7 +546,9 @@ extern fn g_jac(
         j_col: *mut ipopt::Index,
         vals: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+    let cb_data: &mut IpoptCBData = unsafe {
+        &mut *(user_data as *mut IpoptCBData)
+    };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -503,11 +579,21 @@ extern fn g_jac(
             pars: cb_data.pars,
         };
 
+        solve_cons(cb_data, &store);
         let values = unsafe {
             slice::from_raw_parts_mut(vals, nele_jac as usize)
         };
-        for (i, &(cid, vid)) in cb_data.cache.j_sparsity.iter().enumerate() {
-            values[i] = cb_data.model.cons[cid].expr.deriv(&store, vid).1;
+
+        // Could have put all the constant derivatives in one great big vector,
+        // and then just copy that chunk over.  Would require different
+        // sparsity ordering.
+        let mut vind = 0_usize;
+        for (i, col) in cb_data.cache.cons.iter().enumerate() {
+            let sp = vind + cb_data.cache.cons_const[i].der1.len();
+            let ed = sp + col.der1.len();
+            values[0..sp].copy_from_slice(&cb_data.cache.cons_const[i].der1);
+            values[sp..ed].copy_from_slice(&col.der1);
+            vind = ed;
         }
     }
     1
@@ -526,7 +612,9 @@ extern fn l_hess(
         j_col: *mut ipopt::Index,
         vals: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &IpoptCBData = unsafe { &*(user_data as *const IpoptCBData) };
+    let cb_data: &mut IpoptCBData = unsafe {
+        &mut *(user_data as *mut IpoptCBData)
+    };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -546,9 +634,9 @@ extern fn l_hess(
         let col = unsafe {
             slice::from_raw_parts_mut(j_col, nele_hes as usize)
         };
-        for (vids, ent) in &cb_data.cache.h_sparsity.sp {
-            row[ent.id] = vids.0 as i32;
-            col[ent.id] = vids.1 as i32;
+        for (vids, &ind) in &cb_data.cache.h_sparsity.sp {
+            row[ind] = vids.0 as i32;
+            col[ind] = vids.1 as i32;
         }
     } else {
         // Set values
@@ -557,141 +645,188 @@ extern fn l_hess(
             pars: cb_data.pars,
         };
 
+        solve_obj(cb_data, &store);
+        solve_cons(cb_data, &store);
         let lam = unsafe { slice::from_raw_parts(lambda, m as usize) };
         let values = unsafe {
             slice::from_raw_parts_mut(vals, nele_hes as usize)
         };
-        for (vids, ent) in &cb_data.cache.h_sparsity.sp {
-            let mut v = 0.0;
-            if ent.obj {
-                v += obj_factor*cb_data.model.obj.expr
-                    .deriv2(&store, vids.0, vids.1).3;
+
+        // Not sure if we need to clear, doing it anyway
+        for v in values.iter_mut() {
+            *v = 0.0;
+        }
+
+        let mut ind_pos = 0;
+        for v in &cb_data.cache.obj_const.der2 {
+            let vind = cb_data.cache.h_sparsity.obj_inds[ind_pos];
+            values[vind] += obj_factor*v;
+            ind_pos += 1;
+        }
+
+        for v in &cb_data.cache.obj.der2 {
+            let vind = cb_data.cache.h_sparsity.obj_inds[ind_pos];
+            values[vind] += obj_factor*v;
+            ind_pos += 1;
+        }
+
+        for i in 0..(m as usize) {
+            ind_pos = 0;
+
+            for v in &cb_data.cache.cons_const[i].der2 {
+                let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
+                values[vind] += lam[i]*v;
+                ind_pos += 1;
             }
-            for cid in &ent.cons {
-                v += lam[*cid]*cb_data.model.cons[*cid].expr
-                    .deriv2(&store, vids.0, vids.1).3;
+
+            for v in &cb_data.cache.cons[i].der2 {
+                let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
+                values[vind] += lam[i]*v;
+                ind_pos += 1;
             }
-            values[ent.id] = v;
         }
     }
     1
 }
 
+extern fn intermediate(
+        _alg_mod: ipopt::Index,
+        _iter_count: ipopt::Index,
+        _obj_value: ipopt::Number,
+        _inf_pr: ipopt::Number,
+        _inf_du: ipopt::Number,
+        _mu: ipopt::Number,
+        _d_norm: ipopt::Number,
+        _regularization_size: ipopt::Number,
+        _alpha_du: ipopt::Number,
+        _alpha_pr: ipopt::Number,
+        _ls_trials: ipopt::Number,
+        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+    let cb_data: &mut IpoptCBData = unsafe {
+        &mut *(user_data as *mut IpoptCBData)
+    };
+
+    cb_data.cache.obj_ready = false;
+    cb_data.cache.cons_ready = false;
+    1
+}
+
+
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use expression::NumOps;
+    use expression::NumOpsF;
     use super::*;
-    #[test]
-    fn univar_problem() {
-        let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0, 0.0);
-        m.set_obj(&x*&x);
-        assert!(m.set_str_option("sb", "yes"));
-        assert!(m.set_int_option("print_level", 0));
-        let (stat, sol) = m.solve();
-        assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-            assert!((s.obj_val - 1.0).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn multivar_problem() {
-        let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0, 0.0);
-        let y = m.add_var(-1.0, 1.0, 0.0);
-        m.set_obj(&x*&x + &y*&y + &x*&y);
-        m.silence();
-        let (stat, sol) = m.solve();
-        assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-            assert!((s.value(&y) + 0.5).abs() < 1e-6);
-            assert!((s.obj_val - 0.75).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn equality_problem() {
-        let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0, 0.0);
-        let y = m.add_var(-1.0, 1.0, 0.0);
-        m.set_obj(&x*&x + &y*&y + &x*&y);
-        m.add_con(&x + &y, 0.75, 0.75);
-        m.silence();
-        let (stat, sol) = m.solve();
-        assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-            assert!((s.value(&y) + 0.25).abs() < 1e-6);
-            assert!((s.obj_val - 0.8125).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn inequality_problem() {
-        let mut m = IpoptModel::new();
-        let x = m.add_var(1.0, 5.0, 0.0);
-        let y = m.add_var(-1.0, 1.0, 0.0);
-        m.set_obj(&x*&x + &y*&y + &x*&y);
-        m.add_con(&x + &y, 0.25, 0.40);
-        m.silence();
-        let (stat, sol) = m.solve();
-        assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-            assert!((s.value(&y) + 0.6).abs() < 1e-6);
-            assert!((s.obj_val - 0.76).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn quad_constraint_problem() {
-        let mut m = IpoptModel::new();
-        let x = m.add_var(-10.0, 10.0, 0.0);
-        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
-        m.set_obj(2*&y);
-        m.add_con(&y - &x*&x + &x, 0.0, f64::INFINITY);
-        m.silence();
-        let (stat, sol) = m.solve();
-        assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.value(&x) - 0.5).abs() < 1e-5);
-            assert!((s.value(&y) + 0.25).abs() < 1e-5);
-            assert!((s.obj_val + 0.5).abs() < 1e-4);
-        }
-    }
-
-    #[bench]
-    fn large_problem(b: &mut test::Bencher) {
-        //let n = 100000;
-        let n = 10;
-        b.iter(|| {
-            let mut m = IpoptModel::new();
-            let mut xs = Vec::new();
-            for _i in 0..n {
-                xs.push(m.add_var(-1.5, 0.0, -0.5));
-            }
-            let mut obj = Expr::Integer(0);
-            for x in &xs {
-                obj = obj + (x - 1).powi(2);
-            }
-            m.set_obj(obj);
-            for i in 0..(n-2) {
-                let a = ((i + 2) as f64)/(n as f64);
-                m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
-                          *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
-            }
-            m.silence();
-            m.solve();
-            //let (stat, sol) = m.solve();
-        });
-    }
+//    #[test]
+//    fn univar_problem() {
+//        let mut m = IpoptModel::new();
+//        let x = m.add_var(1.0, 5.0, 0.0);
+//        m.set_obj(&x*&x);
+//        assert!(m.set_str_option("sb", "yes"));
+//        assert!(m.set_int_option("print_level", 0));
+//        let (stat, sol) = m.solve();
+//        assert_eq!(stat, SolutionStatus::Solved);
+//        assert!(sol.is_some());
+//        if let Some(ref s) = sol {
+//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+//            assert!((s.obj_val - 1.0).abs() < 1e-6);
+//        }
+//    }
+//
+//    #[test]
+//    fn multivar_problem() {
+//        let mut m = IpoptModel::new();
+//        let x = m.add_var(1.0, 5.0, 0.0);
+//        let y = m.add_var(-1.0, 1.0, 0.0);
+//        m.set_obj(&x*&x + &y*&y + &x*&y);
+//        m.silence();
+//        let (stat, sol) = m.solve();
+//        assert_eq!(stat, SolutionStatus::Solved);
+//        assert!(sol.is_some());
+//        if let Some(ref s) = sol {
+//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+//            assert!((s.value(&y) + 0.5).abs() < 1e-6);
+//            assert!((s.obj_val - 0.75).abs() < 1e-6);
+//        }
+//    }
+//
+//    #[test]
+//    fn equality_problem() {
+//        let mut m = IpoptModel::new();
+//        let x = m.add_var(1.0, 5.0, 0.0);
+//        let y = m.add_var(-1.0, 1.0, 0.0);
+//        m.set_obj(&x*&x + &y*&y + &x*&y);
+//        m.add_con(&x + &y, 0.75, 0.75);
+//        m.silence();
+//        let (stat, sol) = m.solve();
+//        assert_eq!(stat, SolutionStatus::Solved);
+//        assert!(sol.is_some());
+//        if let Some(ref s) = sol {
+//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+//            assert!((s.value(&y) + 0.25).abs() < 1e-6);
+//            assert!((s.obj_val - 0.8125).abs() < 1e-6);
+//        }
+//    }
+//
+//    #[test]
+//    fn inequality_problem() {
+//        let mut m = IpoptModel::new();
+//        let x = m.add_var(1.0, 5.0, 0.0);
+//        let y = m.add_var(-1.0, 1.0, 0.0);
+//        m.set_obj(&x*&x + &y*&y + &x*&y);
+//        m.add_con(&x + &y, 0.25, 0.40);
+//        m.silence();
+//        let (stat, sol) = m.solve();
+//        assert_eq!(stat, SolutionStatus::Solved);
+//        assert!(sol.is_some());
+//        if let Some(ref s) = sol {
+//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
+//            assert!((s.value(&y) + 0.6).abs() < 1e-6);
+//            assert!((s.obj_val - 0.76).abs() < 1e-6);
+//        }
+//    }
+//
+//    #[test]
+//    fn quad_constraint_problem() {
+//        let mut m = IpoptModel::new();
+//        let x = m.add_var(-10.0, 10.0, 0.0);
+//        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
+//        m.set_obj(2*&y);
+//        m.add_con(&y - &x*&x + &x, 0.0, f64::INFINITY);
+//        m.silence();
+//        let (stat, sol) = m.solve();
+//        assert_eq!(stat, SolutionStatus::Solved);
+//        assert!(sol.is_some());
+//        if let Some(ref s) = sol {
+//            assert!((s.value(&x) - 0.5).abs() < 1e-5);
+//            assert!((s.value(&y) + 0.25).abs() < 1e-5);
+//            assert!((s.obj_val + 0.5).abs() < 1e-4);
+//        }
+//    }
+//
+//    #[bench]
+//    fn large_problem(b: &mut test::Bencher) {
+//        //let n = 100000;
+//        let n = 10;
+//        b.iter(|| {
+//            let mut m = IpoptModel::new();
+//            let mut xs = Vec::new();
+//            for _i in 0..n {
+//                xs.push(m.add_var(-1.5, 0.0, -0.5));
+//            }
+//            let mut obj = Expr::Integer(0);
+//            for x in &xs {
+//                obj = obj + (x - 1).powi(2);
+//            }
+//            m.set_obj(obj);
+//            for i in 0..(n-2) {
+//                let a = ((i + 2) as f64)/(n as f64);
+//                m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
+//                          *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
+//            }
+//            m.silence();
+//            m.solve();
+//            //let (stat, sol) = m.solve();
+//        });
+//    }
 }

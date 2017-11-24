@@ -20,10 +20,10 @@ pub trait Evaluate {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Var(ID);
+pub struct Var(pub ID);
 
 #[derive(Debug, Clone, Copy)]
-struct Par(ID);
+pub struct Par(pub ID);
 
 #[derive(Debug, Clone)]
 enum Operation {
@@ -274,9 +274,9 @@ impl NumOpsF for Film {
 
 #[derive(Debug, Clone, Default)]
 pub struct Column {
-    val: f64,
-    der1: Vec<f64>,
-    der2: Vec<f64>,
+    pub val: f64,
+    pub der1: Vec<f64>,
+    pub der2: Vec<f64>,
 }
 
 impl Column {
@@ -291,12 +291,12 @@ pub type WorkSpace = Vec<Column>;
 pub struct FilmInfo {
     // Linear and quadratic respective first and second derivatives only need
     // to be computed once on parameter change.
-    lin: Vec<ID>, // const derivative
-    nlin: Vec<ID>, // non-const derivative
+    pub lin: Vec<ID>, // const derivative
+    pub nlin: Vec<ID>, // non-const derivative
     // Below the usize are indices into nlin, a variable representation
     // that is local
-    quad: Vec<(usize, usize)>, // const second derivative
-    nquad: Vec<(usize, usize)>, // non-const second derivative
+    pub quad: Vec<(usize, usize)>, // const second derivative
+    pub nquad: Vec<(usize, usize)>, // non-const second derivative
 }
 
 impl FilmInfo {
@@ -305,17 +305,13 @@ impl FilmInfo {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Film {
     ops: Vec<Oper>,
 }
 
 impl Film {
-    pub fn new() -> Film {
-        Film::default()
-    }
-
-    fn ad(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
+    pub fn ad(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
             ws: &mut WorkSpace) {
         use self::Oper::*;
         use self::{Var, Par};
@@ -454,7 +450,7 @@ impl Film {
         }
     }
 
-    fn get_info(&self) -> FilmInfo {
+    pub fn get_info(&self) -> FilmInfo {
         use self::Oper::*;
         use self::Var;
         let mut degs: Vec<Deg> = Vec::new();
@@ -1636,7 +1632,7 @@ b_ops_film!(Par, Oper::Parameter);
 impl std::ops::Add<Film> for Film {
     type Output = Film;
 
-    fn add(mut self, mut other: Film) -> Film {
+    fn add(mut self, other: Film) -> Film {
         // Assuming add on empty Film is like add by 0.0
         if self.ops.is_empty() {
             other
@@ -2011,7 +2007,7 @@ mod tests {
         store.vars.push(5.0);
         store.vars.push(4.0);
 
-        let mut film = Film::new();
+        let mut film = Film { ops: Vec::new() };
         // v0 + (1.0 - v1)^2
         film.ops.push(Float(1.0));
         film.ops.push(Variable(Var(1)));
@@ -2060,7 +2056,7 @@ mod tests {
         store.vars.push(5.0);
         store.vars.push(4.0);
 
-        let mut film = Film::new();
+        let mut film = Film { ops: Vec::new() };
         // v0 + (1.0 - v1)^2
         film.ops.push(Float(1.0));
         film.ops.push(Variable(Var(1)));
@@ -2088,8 +2084,7 @@ mod tests {
         store.vars.push(5.0);
         store.pars.push(4.0);
 
-        let mut f = Film::new();
-        f = f + 5.0;
+        let mut f = Film::from(5.0);
         f = 5.0 + f;
         f = Var(0) + f;
         f = f*Par(0);
@@ -2116,7 +2111,7 @@ mod tests {
             xs.push(Var(i));
             store.vars.push(0.5);
         }
-        let mut e = Film::new();
+        let mut e = Film::from(0.0);
         for x in &xs {
             e = e + 3.0*(Film::from(x) - 1.0).powi(2) + 5.0;
         }
@@ -2147,7 +2142,7 @@ mod tests {
             xs.push(Var(i));
             store.vars.push(0.5);
         }
-        let mut e = Film::new();
+        let mut e = Film::from(0.0);
         for x in &xs {
             e = e + 3.0*(Film::from(x) - 1.0).powi(2) + 5.0;
         }
