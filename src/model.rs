@@ -1,4 +1,4 @@
-use expression::{Film, Store, ID, Var, Par, WorkSpace};
+use expression::{Film, Store, ID, Var, Par, WorkSpace, Retrieve};
 
 //pub enum VarType {
 //    Continuous,
@@ -59,6 +59,10 @@ impl Solution {
         } else {
             0.0
         }
+    }
+
+    pub fn var(&self, Var(id): Var) -> f64 {
+        self.store.get_var(id)
     }
 
     pub fn con_mult(&self, Con(cid): Con) -> f64 {

@@ -165,8 +165,11 @@ impl IpoptModel {
                                       l_hess)
         };
 
-        // Not sure if should be checking return value
-        unsafe { ipopt::SetIntermediateCallback(prob, intermediate); };
+        // From code always returns true
+        // For some reason getting incorrect/corrupt callback data
+        // Turned off state for call ad once per iteration
+        // This will make things much slower
+        //unsafe { ipopt::SetIntermediateCallback(prob, intermediate) };
 
         let mut cache = ModelCache {
                 j_sparsity: j_sparsity,
@@ -433,7 +436,7 @@ fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
                   store,
                   &mut cb_data.cache.ws,
                   &mut cb_data.cache.obj);
-        cb_data.cache.obj_ready = true;
+        //cb_data.cache.obj_ready = true;
     }
 }
 
@@ -446,10 +449,9 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
                       &mut cb_data.cache.ws,
                       &mut cb_data.cache.cons[i]);
         }
-        cb_data.cache.cons_ready = true;
+        //cb_data.cache.cons_ready = true;
     }
 }
-
 
 extern fn f(
         n: ipopt::Index,
@@ -457,8 +459,10 @@ extern fn f(
         _new_x: ipopt::Bool,
         obj_value: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
+    let cb_data_ptr = user_data as *mut IpoptCBData;
+    //println!("{:?}", cb_data_ptr);
     let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
+        &mut *(cb_data_ptr)
     };
 
     if n != cb_data.model.vars.len() as i32 {
@@ -702,37 +706,38 @@ extern fn intermediate(
         _alpha_pr: ipopt::Number,
         _ls_trials: ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
-    };
+    let cb_data_ptr = user_data as *mut IpoptCBData;
+    if cb_data_ptr.is_null() {
+        return 1;
+    }
+    let cb_data: &mut IpoptCBData = unsafe { &mut *(cb_data_ptr) };
 
     cb_data.cache.obj_ready = false;
     cb_data.cache.cons_ready = false;
     1
 }
 
-
 #[cfg(test)]
 mod tests {
     extern crate test;
     use expression::NumOpsF;
     use super::*;
-//    #[test]
-//    fn univar_problem() {
-//        let mut m = IpoptModel::new();
-//        let x = m.add_var(1.0, 5.0, 0.0);
-//        m.set_obj(&x*&x);
-//        assert!(m.set_str_option("sb", "yes"));
-//        assert!(m.set_int_option("print_level", 0));
-//        let (stat, sol) = m.solve();
-//        assert_eq!(stat, SolutionStatus::Solved);
-//        assert!(sol.is_some());
-//        if let Some(ref s) = sol {
-//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-//            assert!((s.obj_val - 1.0).abs() < 1e-6);
-//        }
-//    }
-//
+    #[test]
+    fn univar_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0, 0.0);
+        m.set_obj(Film::from(x)*Film::from(x));
+        assert!(m.set_str_option("sb", "yes"));
+        assert!(m.set_int_option("print_level", 0));
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.var(x) - 1.0).abs() < 1e-6);
+            assert!((s.obj_val - 1.0).abs() < 1e-6);
+        }
+    }
+
 //    #[test]
 //    fn multivar_problem() {
 //        let mut m = IpoptModel::new();
