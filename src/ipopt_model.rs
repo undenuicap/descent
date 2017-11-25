@@ -169,6 +169,10 @@ impl IpoptModel {
         // For some reason getting incorrect/corrupt callback data
         // Turned off state for call ad once per iteration
         // This will make things much slower
+        // Regardless, I think the function and constraint evaluations
+        // occur more frequently than the jacobian and hessian evaluations,
+        // so should probably work out what is going on behind the scenes and
+        // when we need to update what.
         //unsafe { ipopt::SetIntermediateCallback(prob, intermediate) };
 
         let mut cache = ModelCache {
@@ -726,7 +730,7 @@ mod tests {
     fn univar_problem() {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0, 0.0);
-        m.set_obj(Film::from(x)*Film::from(x));
+        m.set_obj(x*x);
         assert!(m.set_str_option("sb", "yes"));
         assert!(m.set_int_option("print_level", 0));
         let (stat, sol) = m.solve();
@@ -738,77 +742,78 @@ mod tests {
         }
     }
 
-//    #[test]
-//    fn multivar_problem() {
-//        let mut m = IpoptModel::new();
-//        let x = m.add_var(1.0, 5.0, 0.0);
-//        let y = m.add_var(-1.0, 1.0, 0.0);
-//        m.set_obj(&x*&x + &y*&y + &x*&y);
-//        m.silence();
-//        let (stat, sol) = m.solve();
-//        assert_eq!(stat, SolutionStatus::Solved);
-//        assert!(sol.is_some());
-//        if let Some(ref s) = sol {
-//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-//            assert!((s.value(&y) + 0.5).abs() < 1e-6);
-//            assert!((s.obj_val - 0.75).abs() < 1e-6);
-//        }
-//    }
-//
-//    #[test]
-//    fn equality_problem() {
-//        let mut m = IpoptModel::new();
-//        let x = m.add_var(1.0, 5.0, 0.0);
-//        let y = m.add_var(-1.0, 1.0, 0.0);
-//        m.set_obj(&x*&x + &y*&y + &x*&y);
-//        m.add_con(&x + &y, 0.75, 0.75);
-//        m.silence();
-//        let (stat, sol) = m.solve();
-//        assert_eq!(stat, SolutionStatus::Solved);
-//        assert!(sol.is_some());
-//        if let Some(ref s) = sol {
-//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-//            assert!((s.value(&y) + 0.25).abs() < 1e-6);
-//            assert!((s.obj_val - 0.8125).abs() < 1e-6);
-//        }
-//    }
-//
-//    #[test]
-//    fn inequality_problem() {
-//        let mut m = IpoptModel::new();
-//        let x = m.add_var(1.0, 5.0, 0.0);
-//        let y = m.add_var(-1.0, 1.0, 0.0);
-//        m.set_obj(&x*&x + &y*&y + &x*&y);
-//        m.add_con(&x + &y, 0.25, 0.40);
-//        m.silence();
-//        let (stat, sol) = m.solve();
-//        assert_eq!(stat, SolutionStatus::Solved);
-//        assert!(sol.is_some());
-//        if let Some(ref s) = sol {
-//            assert!((s.value(&x) - 1.0).abs() < 1e-6);
-//            assert!((s.value(&y) + 0.6).abs() < 1e-6);
-//            assert!((s.obj_val - 0.76).abs() < 1e-6);
-//        }
-//    }
-//
-//    #[test]
-//    fn quad_constraint_problem() {
-//        let mut m = IpoptModel::new();
-//        let x = m.add_var(-10.0, 10.0, 0.0);
-//        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
-//        m.set_obj(2*&y);
-//        m.add_con(&y - &x*&x + &x, 0.0, f64::INFINITY);
-//        m.silence();
-//        let (stat, sol) = m.solve();
-//        assert_eq!(stat, SolutionStatus::Solved);
-//        assert!(sol.is_some());
-//        if let Some(ref s) = sol {
-//            assert!((s.value(&x) - 0.5).abs() < 1e-5);
-//            assert!((s.value(&y) + 0.25).abs() < 1e-5);
-//            assert!((s.obj_val + 0.5).abs() < 1e-4);
-//        }
-//    }
-//
+    #[test]
+    fn multivar_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0, 0.0);
+        let y = m.add_var(-1.0, 1.0, 0.0);
+        m.set_obj(x*x + y*y + x*y);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.var(x) - 1.0).abs() < 1e-6);
+            assert!((s.var(y) + 0.5).abs() < 1e-6);
+            assert!((s.obj_val - 0.75).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn equality_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0, 0.0);
+        let y = m.add_var(-1.0, 1.0, 0.0);
+        m.set_obj(x*x + y*y + x*y);
+        m.add_con(x + y, 0.75, 0.75);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.var(x) - 1.0).abs() < 1e-6);
+            assert!((s.var(y) + 0.25).abs() < 1e-6);
+            assert!((s.obj_val - 0.8125).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn inequality_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(1.0, 5.0, 0.0);
+        let y = m.add_var(-1.0, 1.0, 0.0);
+        m.set_obj(x*x + y*y + x*y);
+        m.add_con(x + y, 0.25, 0.40);
+        m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            assert!((s.var(x) - 1.0).abs() < 1e-6);
+            assert!((s.var(y) + 0.6).abs() < 1e-6);
+            assert!((s.obj_val - 0.76).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn quad_constraint_problem() {
+        let mut m = IpoptModel::new();
+        let x = m.add_var(-10.0, 10.0, 0.0);
+        let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
+        m.set_obj(2.0*y);
+        m.add_con(y - x*x + x, 0.0, f64::INFINITY);
+        //m.silence();
+        let (stat, sol) = m.solve();
+        assert_eq!(stat, SolutionStatus::Solved);
+        assert!(sol.is_some());
+        if let Some(ref s) = sol {
+            println!("{} {}", s.var(x), s.var(y));
+            assert!((s.var(x) - 0.5).abs() < 1e-5);
+            assert!((s.var(y) + 0.25).abs() < 1e-5);
+            assert!((s.obj_val + 0.5).abs() < 1e-4);
+        }
+    }
+
 //    #[bench]
 //    fn large_problem(b: &mut test::Bencher) {
 //        //let n = 100000;

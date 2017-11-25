@@ -214,10 +214,10 @@ impl From<Var> for Film {
     }
 }
 
-impl<'a> From<&'a Var> for Film {
-    fn from(v: &'a Var) -> Film {
+impl From<Par> for Film {
+    fn from(p: Par) -> Film {
         Film {
-            ops: vec![self::Oper::Variable(v.clone())],
+            ops: vec![self::Oper::Parameter(p)],
         }
     }
 }
@@ -271,6 +271,33 @@ impl NumOpsF for Film {
     }
 }
 
+impl NumOpsF for Var {
+    fn powi(self, p: i32) -> Film {
+        Film::from(self).powi(p)
+    }
+
+    fn sin(self) -> Film {
+        Film::from(self).sin()
+    }
+
+    fn cos(mut self) -> Film {
+        Film::from(self).cos()
+    }
+}
+
+impl NumOpsF for Par {
+    fn powi(self, p: i32) -> Film {
+        Film::from(self).powi(p)
+    }
+
+    fn sin(self) -> Film {
+        Film::from(self).sin()
+    }
+
+    fn cos(mut self) -> Film {
+        Film::from(self).cos()
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Column {
@@ -1522,112 +1549,90 @@ impl std::ops::Mul<Tape> for Tape {
     }
 }
 
-macro_rules! b_ops_film {
-    ( $U:ty, $C:expr ) => {
-        impl std::ops::Add<$U> for Film {
+macro_rules! binary_ops_to_film {
+    ( $T:ident, $f:ident, $U:ty, $V:ty ) => {
+        impl std::ops::$T<$V> for $U {
             type Output = Film;
 
-            fn add(mut self, other: $U) -> Film {
-                // Assuming add on empty Film is like add by 0.0
-                if self.ops.is_empty() {
-                    self.add_op($C(other));
-                } else {
-                    let n = self.ops.len();
-                    self.add_op($C(other));
-                    self.add_op(Oper::Add(n - 1));
-                }
-                self
-            }
-        }
-
-        impl std::ops::Add<Film> for $U {
-            type Output = Film;
-
-            fn add(self, mut other: Film) -> Film {
-                // Assuming add on empty Film is like add by 0.0
-                if other.ops.is_empty() {
-                    other.add_op($C(self));
-                } else {
-                    let n = other.ops.len();
-                    other.add_op($C(self));
-                    other.add_op(Oper::Add(n - 1));
-                }
-                other
-            }
-        }
-
-        impl std::ops::Mul<$U> for Film {
-            type Output = Film;
-
-            fn mul(mut self, other: $U) -> Film {
-                // Assuming mul on empty Film is like mul by 1.0
-                if self.ops.is_empty() {
-                    self.add_op($C(other));
-                } else {
-                    let n = self.ops.len();
-                    self.add_op($C(other));
-                    self.add_op(Oper::Mul(n - 1));
-                }
-                self
-            }
-        }
-
-        impl std::ops::Mul<Film> for $U {
-            type Output = Film;
-
-            fn mul(self, mut other: Film) -> Film {
-                // Assuming mul on empty Film is like mul by 1.0
-                if other.ops.is_empty() {
-                    other.add_op($C(self));
-                } else {
-                    let n = other.ops.len();
-                    other.add_op($C(self));
-                    other.add_op(Oper::Mul(n - 1));
-                }
-                other
-            }
-        }
-
-        impl std::ops::Sub<$U> for Film {
-            type Output = Film;
-
-            fn sub(mut self, other: $U) -> Film {
-                // Assuming sub on empty Film is like sub with 0.0
-                if self.ops.is_empty() {
-                    self.add_op($C(other));
-                    self.add_op(Oper::Neg);
-                } else {
-                    let n = self.ops.len();
-                    self.add_op($C(other));
-                    self.add_op(Oper::Neg);
-                    self.add_op(Oper::Add(n - 1));
-                }
-                self
-            }
-        }
-
-        impl std::ops::Sub<Film> for $U {
-            type Output = Film;
-
-            fn sub(self, mut other: Film) -> Film {
-                // Assuming sub on empty Film is like sub with 0.0
-                if other.ops.is_empty() {
-                    other.add_op($C(self));
-                } else {
-                    let n = other.ops.len();
-                    other.add_op(Oper::Neg);
-                    other.add_op($C(self));
-                    other.add_op(Oper::Add(n)); // need to grab Neg value
-                }
-                other
+            fn $f(self, other: $V) -> Film {
+                Film::from(self).$f(Film::from(other))
             }
         }
     };
 }
 
-b_ops_film!(f64, Oper::Float);
-b_ops_film!(Var, Oper::Variable);
-b_ops_film!(Par, Oper::Parameter);
+macro_rules! binary_ops_with_film {
+    ( $T:ident, $f:ident, $U:ty ) => {
+        impl std::ops::$T<Film> for $U {
+            type Output = Film;
+
+            fn $f(self, other: Film) -> Film {
+                Film::from(self).$f(other)
+            }
+        }
+
+        impl std::ops::$T<$U> for Film {
+            type Output = Film;
+
+            fn $f(self, other: $U) -> Film {
+                self.$f(Film::from(other))
+            }
+        }
+
+        impl<'a> std::ops::$T<&'a Film> for $U {
+            type Output = Film;
+
+            fn $f(self, other: &'a Film) -> Film {
+                Film::from(self).$f(other.clone())
+            }
+        }
+
+        impl<'a> std::ops::$T<$U> for &'a Film {
+            type Output = Film;
+
+            fn $f(self, other: $U) -> Film {
+                self.clone().$f(Film::from(other))
+            }
+        }
+    };
+}
+
+binary_ops_to_film!(Add, add, Var, f64);
+binary_ops_to_film!(Add, add, f64, Var);
+binary_ops_to_film!(Add, add, Par, f64);
+binary_ops_to_film!(Add, add, f64, Par);
+binary_ops_to_film!(Add, add, Par, Var);
+binary_ops_to_film!(Add, add, Var, Par);
+binary_ops_to_film!(Add, add, Var, Var);
+binary_ops_to_film!(Add, add, Par, Par);
+
+binary_ops_to_film!(Sub, sub, Var, f64);
+binary_ops_to_film!(Sub, sub, f64, Var);
+binary_ops_to_film!(Sub, sub, Par, f64);
+binary_ops_to_film!(Sub, sub, f64, Par);
+binary_ops_to_film!(Sub, sub, Par, Var);
+binary_ops_to_film!(Sub, sub, Var, Par);
+binary_ops_to_film!(Sub, sub, Var, Var);
+binary_ops_to_film!(Sub, sub, Par, Par);
+
+binary_ops_to_film!(Mul, mul, Var, f64);
+binary_ops_to_film!(Mul, mul, f64, Var);
+binary_ops_to_film!(Mul, mul, Par, f64);
+binary_ops_to_film!(Mul, mul, f64, Par);
+binary_ops_to_film!(Mul, mul, Par, Var);
+binary_ops_to_film!(Mul, mul, Var, Par);
+binary_ops_to_film!(Mul, mul, Var, Var);
+binary_ops_to_film!(Mul, mul, Par, Par);
+
+binary_ops_with_film!(Add, add, Var);
+binary_ops_with_film!(Add, add, Par);
+binary_ops_with_film!(Add, add, f64);
+binary_ops_with_film!(Sub, sub, Var);
+binary_ops_with_film!(Sub, sub, Par);
+binary_ops_with_film!(Sub, sub, f64);
+binary_ops_with_film!(Mul, mul, Var);
+binary_ops_with_film!(Mul, mul, Par);
+binary_ops_with_film!(Mul, mul, f64);
 
 impl std::ops::Add<Film> for Film {
     type Output = Film;
@@ -2113,7 +2118,7 @@ mod tests {
         }
         let mut e = Film::from(0.0);
         for x in &xs {
-            e = e + 3.0*(Film::from(x) - 1.0).powi(2) + 5.0;
+            e = e + 3.0*(Film::from(*x) - 1.0).powi(2) + 5.0;
         }
         let mut ws = WorkSpace::new();
         //println!("{:?}", e);
@@ -2144,7 +2149,7 @@ mod tests {
         }
         let mut e = Film::from(0.0);
         for x in &xs {
-            e = e + 3.0*(Film::from(x) - 1.0).powi(2) + 5.0;
+            e = e + 3.0*(Film::from(*x) - 1.0).powi(2) + 5.0;
         }
         let mut ws = WorkSpace::new();
         //println!("{:?}", e);
