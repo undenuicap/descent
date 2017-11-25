@@ -50,8 +50,6 @@ struct ModelCache {
     obj_const: Column,
     cons: Vec<Column>,
     obj: Column,
-    cons_ready: bool,
-    obj_ready: bool,
 }
 
 // Make sure don't implement copy or clone for this otherwise risk of double
@@ -167,19 +165,12 @@ impl IpoptModel {
 
         // From code always returns true
         // For some reason getting incorrect/corrupt callback data
-        // Turned off state for call ad once per iteration
-        // This will make things much slower
-        // Regardless, I think the function and constraint evaluations
-        // occur more frequently than the jacobian and hessian evaluations,
-        // so should probably work out what is going on behind the scenes and
-        // when we need to update what.
+        // Don't need anymore because using new_x
         //unsafe { ipopt::SetIntermediateCallback(prob, intermediate) };
 
         let mut cache = ModelCache {
                 j_sparsity: j_sparsity,
                 h_sparsity: h_sparsity,
-                cons_ready: false,
-                obj_ready: false,
                 ..Default::default()
             };
         cache.cons.resize(ncons, Column::new());
@@ -275,9 +266,6 @@ impl IpoptModel {
                 cache.obj_const = const_col(&self.model.obj.film,
                                             &self.model.obj.info,
                                             &sol.store, &mut cache.ws);
-
-                cache.cons_ready = false;
-                cache.obj_ready = false;
 
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
@@ -393,6 +381,7 @@ impl Model for IpoptModel {
         self.prepared = false;
         let id = self.model.cons.len();
         let finfo = film.get_info();
+        //println!("{:?}", finfo);
         self.model.cons.push(Constraint { film: film, info: finfo,
             lb: lb, ub: ub });
         Con(id)
@@ -434,51 +423,47 @@ impl<'a> Retrieve for Store<'a> {
 }
 
 fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
-    if !cb_data.cache.obj_ready {
-        dynam_col(&cb_data.model.obj.film,
-                  &cb_data.model.obj.info,
-                  store,
-                  &mut cb_data.cache.ws,
-                  &mut cb_data.cache.obj);
-        //cb_data.cache.obj_ready = true;
-    }
+    dynam_col(&cb_data.model.obj.film,
+              &cb_data.model.obj.info,
+              store,
+              &mut cb_data.cache.ws,
+              &mut cb_data.cache.obj);
 }
 
 fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
-    if !cb_data.cache.cons_ready {
-        for (i, c) in cb_data.model.cons.iter().enumerate() {
-            dynam_col(&c.film,
-                      &c.info,
-                      store,
-                      &mut cb_data.cache.ws,
-                      &mut cb_data.cache.cons[i]);
-        }
-        //cb_data.cache.cons_ready = true;
+    for (i, c) in cb_data.model.cons.iter().enumerate() {
+        dynam_col(&c.film,
+                  &c.info,
+                  store,
+                  &mut cb_data.cache.ws,
+                  &mut cb_data.cache.cons[i]);
     }
 }
 
 extern fn f(
         n: ipopt::Index,
         x: *const ipopt::Number,
-        _new_x: ipopt::Bool,
+        new_x: ipopt::Bool,
         obj_value: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data_ptr = user_data as *mut IpoptCBData;
-    //println!("{:?}", cb_data_ptr);
     let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(cb_data_ptr)
+        &mut *(user_data as *mut IpoptCBData)
     };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
     }
 
-    let store = Store {
-        vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: cb_data.pars,
-    };
+    if new_x == 1 {
+        let store = Store {
+            vars: unsafe { slice::from_raw_parts(x, n as usize) },
+            pars: cb_data.pars,
+        };
 
-    solve_obj(cb_data, &store);
+        solve_obj(cb_data, &store);
+        solve_cons(cb_data, &store);
+    }
+
     let value = unsafe { &mut *obj_value };
     *value = cb_data.cache.obj.val;
     1
@@ -487,7 +472,7 @@ extern fn f(
 extern fn f_grad(
         n: ipopt::Index,
         x: *const ipopt::Number,
-        _new_x: ipopt::Bool,
+        new_x: ipopt::Bool,
         grad_f: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
     let cb_data: &mut IpoptCBData = unsafe {
@@ -498,24 +483,31 @@ extern fn f_grad(
         return 0;
     }
 
-    let store = Store {
-        vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: cb_data.pars,
-    };
+    if new_x == 1 {
+        let store = Store {
+            vars: unsafe { slice::from_raw_parts(x, n as usize) },
+            pars: cb_data.pars,
+        };
 
-    solve_obj(cb_data, &store);
+        solve_obj(cb_data, &store);
+        solve_cons(cb_data, &store);
+    }
+
     let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
-    let sp = cb_data.cache.obj_const.der1.len();
-    let ed = sp + cb_data.cache.obj.der1.len();
-    values[0..sp].copy_from_slice(&cb_data.cache.obj_const.der1);
-    values[sp..ed].copy_from_slice(&cb_data.cache.obj.der1);
+    // f_grad expects variables in order
+    for (i, &v) in cb_data.model.obj.info.lin.iter().enumerate() {
+        values[v] = cb_data.cache.obj_const.der1[i];
+    }
+    for (i, &v) in cb_data.model.obj.info.nlin.iter().enumerate() {
+        values[v] = cb_data.cache.obj.der1[i];
+    }
     1
 }
 
 extern fn g(
         n: ipopt::Index,
         x: *const ipopt::Number,
-        _new_x: ipopt::Bool,
+        new_x: ipopt::Bool,
         m: ipopt::Index,
         g: *mut ipopt::Number,
         user_data: ipopt::UserDataPtr) -> ipopt::Bool {
@@ -530,12 +522,16 @@ extern fn g(
         return 0;
     }
 
-    let store = Store {
-        vars: unsafe { slice::from_raw_parts(x, n as usize) },
-        pars: cb_data.pars,
-    };
+    if new_x == 1 {
+        let store = Store {
+            vars: unsafe { slice::from_raw_parts(x, n as usize) },
+            pars: cb_data.pars,
+        };
 
-    solve_cons(cb_data, &store);
+        solve_obj(cb_data, &store);
+        solve_cons(cb_data, &store);
+    }
+
     let values = unsafe { slice::from_raw_parts_mut(g, m as usize) };
 
     for (i, col) in cb_data.cache.cons.iter().enumerate() {
@@ -547,7 +543,7 @@ extern fn g(
 extern fn g_jac(
         n: ipopt::Index,
         x: *const ipopt::Number,
-        _new_x: ipopt::Bool,
+        new_x: ipopt::Bool,
         m: ipopt::Index,
         nele_jac: ipopt::Index,
         i_row: *mut ipopt::Index,
@@ -582,12 +578,16 @@ extern fn g_jac(
         }
     } else {
         // Set values
-        let store = Store {
-            vars: unsafe { slice::from_raw_parts(x, n as usize) },
-            pars: cb_data.pars,
-        };
+        if new_x == 1 {
+            let store = Store {
+                vars: unsafe { slice::from_raw_parts(x, n as usize) },
+                pars: cb_data.pars,
+            };
 
-        solve_cons(cb_data, &store);
+            solve_obj(cb_data, &store);
+            solve_cons(cb_data, &store);
+        }
+
         let values = unsafe {
             slice::from_raw_parts_mut(vals, nele_jac as usize)
         };
@@ -599,7 +599,7 @@ extern fn g_jac(
         for (i, col) in cb_data.cache.cons.iter().enumerate() {
             let sp = vind + cb_data.cache.cons_const[i].der1.len();
             let ed = sp + col.der1.len();
-            values[0..sp].copy_from_slice(&cb_data.cache.cons_const[i].der1);
+            values[vind..sp].copy_from_slice(&cb_data.cache.cons_const[i].der1);
             values[sp..ed].copy_from_slice(&col.der1);
             vind = ed;
         }
@@ -610,7 +610,7 @@ extern fn g_jac(
 extern fn l_hess(
         n: ipopt::Index,
         x: *const ipopt::Number,
-        _new_x: ipopt::Bool,
+        new_x: ipopt::Bool,
         obj_factor: ipopt::Number,
         m: ipopt::Index,
         lambda: *const ipopt::Number,
@@ -648,13 +648,16 @@ extern fn l_hess(
         }
     } else {
         // Set values
-        let store = Store {
-            vars: unsafe { slice::from_raw_parts(x, n as usize) },
-            pars: cb_data.pars,
-        };
+        if new_x == 1 {
+            let store = Store {
+                vars: unsafe { slice::from_raw_parts(x, n as usize) },
+                pars: cb_data.pars,
+            };
 
-        solve_obj(cb_data, &store);
-        solve_cons(cb_data, &store);
+            solve_obj(cb_data, &store);
+            solve_cons(cb_data, &store);
+        }
+
         let lam = unsafe { slice::from_raw_parts(lambda, m as usize) };
         let values = unsafe {
             slice::from_raw_parts_mut(vals, nele_hes as usize)
@@ -697,30 +700,6 @@ extern fn l_hess(
     1
 }
 
-extern fn intermediate(
-        _alg_mod: ipopt::Index,
-        _iter_count: ipopt::Index,
-        _obj_value: ipopt::Number,
-        _inf_pr: ipopt::Number,
-        _inf_du: ipopt::Number,
-        _mu: ipopt::Number,
-        _d_norm: ipopt::Number,
-        _regularization_size: ipopt::Number,
-        _alpha_du: ipopt::Number,
-        _alpha_pr: ipopt::Number,
-        _ls_trials: ipopt::Number,
-        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data_ptr = user_data as *mut IpoptCBData;
-    if cb_data_ptr.is_null() {
-        return 1;
-    }
-    let cb_data: &mut IpoptCBData = unsafe { &mut *(cb_data_ptr) };
-
-    cb_data.cache.obj_ready = false;
-    cb_data.cache.cons_ready = false;
-    1
-}
-
 #[cfg(test)]
 mod tests {
     extern crate test;
@@ -731,8 +710,7 @@ mod tests {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0, 0.0);
         m.set_obj(x*x);
-        assert!(m.set_str_option("sb", "yes"));
-        assert!(m.set_int_option("print_level", 0));
+        assert!(m.silence());
         let (stat, sol) = m.solve();
         assert_eq!(stat, SolutionStatus::Solved);
         assert!(sol.is_some());
@@ -797,46 +775,48 @@ mod tests {
 
     #[test]
     fn quad_constraint_problem() {
+        // PROBLEM: f_grad needs to have entries in variable index order
+        // PROBLEM: f_grad need to zero out variables that don't feature?
         let mut m = IpoptModel::new();
         let x = m.add_var(-10.0, 10.0, 0.0);
         let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
         m.set_obj(2.0*y);
         m.add_con(y - x*x + x, 0.0, f64::INFINITY);
-        //m.silence();
+        m.silence();
         let (stat, sol) = m.solve();
         assert_eq!(stat, SolutionStatus::Solved);
         assert!(sol.is_some());
         if let Some(ref s) = sol {
-            println!("{} {}", s.var(x), s.var(y));
             assert!((s.var(x) - 0.5).abs() < 1e-5);
             assert!((s.var(y) + 0.25).abs() < 1e-5);
             assert!((s.obj_val + 0.5).abs() < 1e-4);
         }
     }
 
-//    #[bench]
-//    fn large_problem(b: &mut test::Bencher) {
-//        //let n = 100000;
-//        let n = 10;
-//        b.iter(|| {
-//            let mut m = IpoptModel::new();
-//            let mut xs = Vec::new();
-//            for _i in 0..n {
-//                xs.push(m.add_var(-1.5, 0.0, -0.5));
-//            }
-//            let mut obj = Expr::Integer(0);
-//            for x in &xs {
-//                obj = obj + (x - 1).powi(2);
-//            }
-//            m.set_obj(obj);
-//            for i in 0..(n-2) {
-//                let a = ((i + 2) as f64)/(n as f64);
-//                m.add_con(((&xs[i + 1]).powi(2) + 1.5*(&xs[i + 1]) - a)
-//                          *(&xs[i + 2]).cos() - &xs[i], 0.0, 0.0);
-//            }
-//            m.silence();
-//            m.solve();
-//            //let (stat, sol) = m.solve();
-//        });
-//    }
+    #[bench]
+    fn large_problem(b: &mut test::Bencher) {
+        //let n = 100000;
+        //let n = 100;
+        let n = 10;
+        b.iter(|| {
+            let mut m = IpoptModel::new();
+            let mut xs = Vec::new();
+            for _i in 0..n {
+                xs.push(m.add_var(-1.5, 0.0, -0.5));
+            }
+            let mut obj = Film::from(0.0);
+            for x in &xs {
+                obj = obj + (*x - 1.0).powi(2);
+            }
+            m.set_obj(obj);
+            for i in 0..(n-2) {
+                let a = ((i + 2) as f64)/(n as f64);
+                m.add_con(((xs[i + 1]).powi(2) + 1.5*(xs[i + 1]) - a)
+                          *(xs[i + 2]).cos() - xs[i], 0.0, 0.0);
+            }
+            m.silence();
+            m.solve();
+            //let (stat, sol) = m.solve();
+        });
+    }
 }
