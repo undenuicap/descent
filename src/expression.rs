@@ -289,7 +289,7 @@ impl NumOpsF for Var {
         Film::from(self).sin()
     }
 
-    fn cos(mut self) -> Film {
+    fn cos(self) -> Film {
         Film::from(self).cos()
     }
 }
@@ -303,7 +303,7 @@ impl NumOpsF for Par {
         Film::from(self).sin()
     }
 
-    fn cos(mut self) -> Film {
+    fn cos(self) -> Film {
         Film::from(self).cos()
     }
 }
@@ -351,7 +351,10 @@ impl Film {
             ws: &mut WorkSpace) {
         use self::Oper::*;
         use self::{Var, Par};
-        ws.resize(self.ops.len(), Column::new());
+        // Only resize up
+        if ws.len() < self.ops.len() {
+            ws.resize(self.ops.len(), Column::new());
+        }
         for (i, op) in self.ops.iter().enumerate() {
             let (left, right) = ws.split_at_mut(i);
             let cur = &mut right[0]; // the i value from original
@@ -484,6 +487,16 @@ impl Film {
                 },
             }
         }
+    }
+
+    // Should not be called on short workspace or empty film
+    pub fn last_in<'a>(&self, ws: &'a WorkSpace) -> &'a Column {
+        &ws[self.ops.len() - 1]
+    }
+
+    // Should not be called on short workspace or empty film
+    pub fn last_mut_in<'a>(&self, ws: &'a mut WorkSpace) -> &'a mut Column {
+        &mut ws[self.ops.len() - 1]
     }
 
     pub fn get_info(&self) -> FilmInfo {

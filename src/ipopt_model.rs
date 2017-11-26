@@ -75,16 +75,18 @@ fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace) -> Column {
     let mut col = Column::new();
     film.ad(&info.lin, &Vec::new(), store, ws);
-    col.der1 = ws.last().unwrap().der1.clone();
+    col.der1 = film.last_in(ws).der1.clone();
     film.ad(&info.nlin, &info.quad, store, ws);
-    col.der2 = ws.last().unwrap().der2.clone();
+    col.der2 = film.last_in(ws).der2.clone();
     col
 }
 
 fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace, col: &mut Column) {
     film.ad(&info.nlin, &info.nquad, store, ws);
-    mem::swap(col, ws.last_mut().unwrap());
+    mem::swap(col, film.last_mut_in(ws));
+    // This might grow memory over time till all films have columns with the
+    // same capacity (as they leak out of workspace here).
 }
 
 impl IpoptModel {
@@ -494,14 +496,11 @@ extern fn f_grad(
     }
 
     let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
-    // f_grad expects variables in order
-    // SHOULD CHECK IF NEED TO ZERO OTHER ENTRIES IN GRAD_F
-    // SHOULD CHECK IF WE ONLY NEED TO UPLOAD CONSTANT VALUES ONCE (FOR JAC AT
-    // LEAST).
-    // SHOULD CHECK IF WE CAN CALCULATE ON DEMAND, IE USE NEW_X TO TRIGGER OTHER
-    // STATES.
-    // SHOULD CHECK IF HESSIAN NEEDS TO BE ZEROED AFTER EACH ITERATION
-    // ONLY RESIZE UP WORKSPACE?
+    // Should check if need to zero other entries in grad_f
+    // Should check if we only need to upload constant values once (for jac at
+    // least).
+    // Should check if we can calculate on demand, ie use new_x to trigger other
+    // states.
     // For f_grad looks like one first call values are not saved, but after
     // that they are.
     // g_grad doesn't have same issue
@@ -515,6 +514,7 @@ extern fn f_grad(
         *v = 0.0;
     }
 
+    // f_grad expects variables in order
     for (i, &v) in cb_data.model.obj.info.lin.iter().enumerate() {
         values[v] = cb_data.cache.obj_const.der1[i];
     }
