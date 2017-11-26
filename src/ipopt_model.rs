@@ -64,7 +64,7 @@ impl Drop for IpoptProblem {
     }
 }
 
-struct IpoptModel {
+pub struct IpoptModel {
     model: ModelData,
     cache: Option<ModelCache>,
     prob: Option<IpoptProblem>,
@@ -90,7 +90,7 @@ fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
 }
 
 impl IpoptModel {
-    fn new() -> IpoptModel {
+    pub fn new() -> IpoptModel {
         IpoptModel {
             model: ModelData {
                 vars: Vec::new(),
@@ -184,7 +184,7 @@ impl IpoptModel {
 
     // Options can only be set once model is prepared.
     // They will be lost if the model is modified.
-    fn set_str_option(&mut self, key: &str, val: &str) -> bool {
+    pub fn set_str_option(&mut self, key: &str, val: &str) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
             let key_c = CString::new(key).unwrap();
@@ -198,7 +198,7 @@ impl IpoptModel {
         }
     }
 
-    fn set_num_option(&mut self, key: &str, val: f64) -> bool {
+    pub fn set_num_option(&mut self, key: &str, val: f64) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
             let key_c = CString::new(key).unwrap();
@@ -211,7 +211,7 @@ impl IpoptModel {
         }
     }
 
-    fn set_int_option(&mut self, key: &str, val: i32) -> bool {
+    pub fn set_int_option(&mut self, key: &str, val: i32) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
             let key_c = CString::new(key).unwrap();
@@ -225,7 +225,7 @@ impl IpoptModel {
     }
 
     // As it uses options above, will only last as long as model stays prepared
-    fn silence(&mut self) -> bool {
+    pub fn silence(&mut self) -> bool {
         self.set_str_option("sb", "yes")
             && self.set_int_option("print_level", 0)
     }
@@ -841,36 +841,4 @@ mod tests {
             m.solve();
         });
     }
-
-//    #[bench]
-//    fn large_problem_play(b: &mut test::Bencher) {
-//        //let n = 100000;
-//        //let n = 1000; // 75 iters IPOPT 0.150, NLP: 1.807 vs 0.079
-//        let n = 100; // 22 iters IPOPT 0.007, NLP: 0.004 vs 0.001
-//        //let n = 10;
-//        {
-//            let mut m = IpoptModel::new();
-//            let mut xs = Vec::new();
-//            for _i in 0..n {
-//                xs.push(m.add_var(-1.5, 0.0, -0.5));
-//            }
-//            let mut obj = Film::from(0.0);
-//            for x in &xs {
-//                obj = obj + (*x - 1.0).powi(2);
-//            }
-//            m.set_obj(obj);
-//            for i in 0..(n-2) {
-//                let a = ((i + 2) as f64)/(n as f64);
-//                let e = ((xs[i + 1]).powi(2)
-//                         + 1.5*(xs[i + 1]) - a)*(xs[i + 2]).cos() - xs[i];
-//                //println!("{:?}", e);
-//                m.add_con(e, 0.0, 0.0);
-//            }
-//            //m.silence();
-//            m.solve();
-//            //let (stat, sol) = m.solve();
-//        }
-//        b.iter(|| {
-//        });
-//    }
 }
