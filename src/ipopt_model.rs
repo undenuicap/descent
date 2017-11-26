@@ -495,12 +495,33 @@ extern fn f_grad(
 
     let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
     // f_grad expects variables in order
+    // SHOULD CHECK IF NEED TO ZERO OTHER ENTRIES IN GRAD_F
+    // SHOULD CHECK IF WE ONLY NEED TO UPLOAD CONSTANT VALUES ONCE (FOR JAC AT
+    // LEAST).
+    // SHOULD CHECK IF WE CAN CALCULATE ON DEMAND, IE USE NEW_X TO TRIGGER OTHER
+    // STATES.
+    // SHOULD CHECK IF HESSIAN NEEDS TO BE ZEROED AFTER EACH ITERATION
+    // ONLY RESIZE UP WORKSPACE?
+    // For f_grad looks like one first call values are not saved, but after
+    // that they are.
+    // g_grad doesn't have same issue
+    // l_hess is completely over the place, (scaling going on?)
+    // For large sums and multiplications, should consider adding new operator
+    // that might include a constant factor.
+    //println!("bef: {:?}", values);
+
+    // Not sure if we need to clear, doing it anyway
+    for v in values.iter_mut() {
+        *v = 0.0;
+    }
+
     for (i, &v) in cb_data.model.obj.info.lin.iter().enumerate() {
         values[v] = cb_data.cache.obj_const.der1[i];
     }
     for (i, &v) in cb_data.model.obj.info.nlin.iter().enumerate() {
         values[v] = cb_data.cache.obj.der1[i];
     }
+    //println!("aft: {:?}", values);
     1
 }
 
@@ -592,6 +613,7 @@ extern fn g_jac(
             slice::from_raw_parts_mut(vals, nele_jac as usize)
         };
 
+        //println!("bef: {:?}", values);
         // Could have put all the constant derivatives in one great big vector,
         // and then just copy that chunk over.  Would require different
         // sparsity ordering.
@@ -603,6 +625,7 @@ extern fn g_jac(
             values[sp..ed].copy_from_slice(&col.der1);
             vind = ed;
         }
+        //println!("aft: {:?}", values);
     }
     1
 }
@@ -663,7 +686,9 @@ extern fn l_hess(
             slice::from_raw_parts_mut(vals, nele_hes as usize)
         };
 
-        // Not sure if we need to clear, doing it anyway
+        //println!("bef: {:?}", values);
+        // Looks like this is required as values are non-zero and all over the
+        // place on next callback (maybe scaled?)
         for v in values.iter_mut() {
             *v = 0.0;
         }
@@ -696,6 +721,7 @@ extern fn l_hess(
                 ind_pos += 1;
             }
         }
+        //println!("aft: {:?}", values);
     }
     1
 }
@@ -775,8 +801,6 @@ mod tests {
 
     #[test]
     fn quad_constraint_problem() {
-        // PROBLEM: f_grad needs to have entries in variable index order
-        // PROBLEM: f_grad need to zero out variables that don't feature?
         let mut m = IpoptModel::new();
         let x = m.add_var(-10.0, 10.0, 0.0);
         let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
@@ -795,8 +819,6 @@ mod tests {
 
     #[bench]
     fn large_problem(b: &mut test::Bencher) {
-        //let n = 100000;
-        //let n = 100;
         let n = 10;
         b.iter(|| {
             let mut m = IpoptModel::new();
@@ -811,12 +833,44 @@ mod tests {
             m.set_obj(obj);
             for i in 0..(n-2) {
                 let a = ((i + 2) as f64)/(n as f64);
-                m.add_con(((xs[i + 1]).powi(2) + 1.5*(xs[i + 1]) - a)
-                          *(xs[i + 2]).cos() - xs[i], 0.0, 0.0);
+                let e = ((xs[i + 1]).powi(2)
+                         + 1.5*(xs[i + 1]) - a)*(xs[i + 2]).cos() - xs[i];
+                m.add_con(e, 0.0, 0.0);
             }
             m.silence();
             m.solve();
-            //let (stat, sol) = m.solve();
         });
     }
+
+//    #[bench]
+//    fn large_problem_play(b: &mut test::Bencher) {
+//        //let n = 100000;
+//        //let n = 1000; // 75 iters IPOPT 0.150, NLP: 1.807 vs 0.079
+//        let n = 100; // 22 iters IPOPT 0.007, NLP: 0.004 vs 0.001
+//        //let n = 10;
+//        {
+//            let mut m = IpoptModel::new();
+//            let mut xs = Vec::new();
+//            for _i in 0..n {
+//                xs.push(m.add_var(-1.5, 0.0, -0.5));
+//            }
+//            let mut obj = Film::from(0.0);
+//            for x in &xs {
+//                obj = obj + (*x - 1.0).powi(2);
+//            }
+//            m.set_obj(obj);
+//            for i in 0..(n-2) {
+//                let a = ((i + 2) as f64)/(n as f64);
+//                let e = ((xs[i + 1]).powi(2)
+//                         + 1.5*(xs[i + 1]) - a)*(xs[i + 2]).cos() - xs[i];
+//                //println!("{:?}", e);
+//                m.add_con(e, 0.0, 0.0);
+//            }
+//            //m.silence();
+//            m.solve();
+//            //let (stat, sol) = m.solve();
+//        }
+//        b.iter(|| {
+//        });
+//    }
 }

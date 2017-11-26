@@ -113,6 +113,15 @@ impl Deg {
             // Therefore all promoted one level.
             let mut deg = Deg::new();
 
+            // all nlin move over
+            for &id in &self.nlin {
+                deg.nlin.insert(id);
+            }
+
+            for &id in &other.nlin {
+                deg.nlin.insert(id);
+            }
+
             // lin will empty into nlin
             for &id in &self.lin {
                 deg.nlin.insert(id);
@@ -156,7 +165,7 @@ impl Deg {
         deg.nlin = self.lin.union(&(self.nlin)).cloned().collect();
 
         // Could same time here due to symmetry...
-        cross_ids(&(self.nlin), &(self.nlin), &mut (deg.nquad));
+        cross_ids(&(deg.nlin), &(deg.nlin), &mut (deg.nquad));
 
         deg
     }
@@ -900,9 +909,9 @@ impl NumOpsT for Tape {
     }
 }
 
-// As used think this might be filling out top right, not bottom left of hessian
+// Changed this order so filling out bottom left (think)
 fn order(a: ID, b: ID) -> (ID, ID) {
-    if a > b { (b, a) } else { (a, b) }
+    if a < b { (b, a) } else { (a, b) }
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -1873,10 +1882,10 @@ mod tests {
 
         let mut expect = Degree::new();
         expect.linear.insert(2);
-        expect.higher.insert((0, 1));
-        expect.higher.insert((0, 5));
-        expect.higher.insert((1, 5));
-        expect.higher.insert((4, 5));
+        expect.higher.insert((1, 0));
+        expect.higher.insert((5, 0));
+        expect.higher.insert((5, 1));
+        expect.higher.insert((5, 4));
         assert_eq!(e.degree(), expect);
     }
 
@@ -2104,6 +2113,54 @@ mod tests {
         assert_eq!(ws.len(), 7);
         assert_eq!(ws[6].val, 60.0);
         assert_eq!(ws[6].der1[0], 4.0);
+    }
+
+    #[test]
+    fn film_sin() {
+        use expression::Oper::*;
+        use expression::Var;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+
+        let mut ws = WorkSpace::new();
+
+        let f = (2.0*Var(0)).sin();
+        let finfo = f.get_info();
+        //println!("{:?}", f);
+        //println!("{:?}", finfo);
+        assert_eq!(finfo.nlin.len(), 1);
+        assert_eq!(finfo.nquad.len(), 1);
+
+        f.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+
+        assert_eq!(ws.len(), 4);
+        assert_eq!(ws[3].val, 10.0_f64.sin());
+        assert_eq!(ws[3].der1[0], 2.0*(10.0_f64.cos()));
+        assert_eq!(ws[3].der2[0], -4.0*(10.0_f64.sin()));
+    }
+
+    #[test]
+    fn film_cos() {
+        use expression::Oper::*;
+        use expression::Var;
+        let mut store = Store::new();
+        store.vars.push(5.0);
+
+        let mut ws = WorkSpace::new();
+
+        let f = (2.0*Var(0)).cos();
+        let finfo = f.get_info();
+        //println!("{:?}", f);
+        //println!("{:?}", finfo);
+        assert_eq!(finfo.nlin.len(), 1);
+        assert_eq!(finfo.nquad.len(), 1);
+
+        f.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+
+        assert_eq!(ws.len(), 4);
+        assert_eq!(ws[3].val, 10.0_f64.cos());
+        assert_eq!(ws[3].der1[0], -2.0*(10.0_f64.sin()));
+        assert_eq!(ws[3].der2[0], -4.0*(10.0_f64.cos()));
     }
 
     #[bench]
