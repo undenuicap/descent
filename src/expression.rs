@@ -370,8 +370,9 @@ impl Film {
                             .zip(pre.der1.iter()).zip(oth.der1.iter()) {
                         *c = p + o;
                     }
-                    for k in 0..(d2.len()) {
-                        cur.der2[k] = pre.der2[k] + oth.der2[k];
+                    for ((c, p), o) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
+                        *c = p + o;
                     }
                 },
                 Mul(j) => {
@@ -382,11 +383,12 @@ impl Film {
                         cur.der1[k] = pre.der1[k]*oth.val
                                     + pre.val*oth.der1[k];
                     }
-                    for (k, &(k1, k2)) in d2.iter().enumerate() {
-                        cur.der2[k] = pre.der2[k]*oth.val
-                                    + pre.val*oth.der2[k]
-                                    + pre.der1[k1]*oth.der1[k2]
-                                    + pre.der1[k2]*oth.der1[k1];
+                    for (((c, p), o), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(oth.der2.iter())
+                            .zip(d2.iter()) {
+                        *c = p*oth.val + pre.val*o
+                             + pre.der1[k1]*oth.der1[k2]
+                             + pre.der1[k2]*oth.der1[k1];
                     }
                 },
                 Neg => {
@@ -395,8 +397,8 @@ impl Film {
                     for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
                         *c = -p;
                     }
-                    for k in 0..(d2.len()) {
-                        cur.der2[k] = -pre.der2[k];
+                    for (c, p) in cur.der2.iter_mut().zip(pre.der2.iter()) {
+                        *c = -p;
                     }
                 },
                 Pow(pow) => {
@@ -404,20 +406,22 @@ impl Film {
                     match pow {
                         0 => {
                             cur.val = 1.0;
-                            for k in 0..(d1.len()) {
-                                cur.der1[k] = 0.0;
+                            for c in &mut cur.der1 {
+                                *c = 0.0;
                             }
-                            for k in 0..(d2.len()) {
-                                cur.der2[k] = 0.0;
+                            for c in &mut cur.der2 {
+                                *c = 0.0;
                             }
                         },
                         1 => {
                             cur.val = pre.val;
-                            for k in 0..(d1.len()) {
-                                cur.der1[k] = pre.der1[k];
+                            for (c, p) in cur.der1.iter_mut()
+                                    .zip(pre.der1.iter()) {
+                                *c = *p;
                             }
-                            for k in 0..(d2.len()) {
-                                cur.der2[k] = pre.der2[k];
+                            for (c, p) in cur.der2.iter_mut()
+                                    .zip(pre.der2.iter()) {
+                                *c = *p;
                             }
                         },
                         _ => {
@@ -428,11 +432,11 @@ impl Film {
                                     .zip(pre.der1.iter()) {
                                 *c = f64::from(pow)*p*vald;
                             }
-                            for (k, &(k1, k2)) in d2.iter().enumerate() {
-                                cur.der2[k] = f64::from(pow)*pre.der2[k]*vald
-                                            + f64::from(pow*(pow - 1))
-                                            *pre.der1[k1]*pre.der1[k2]
-                                            *valdd;
+                            for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                                    .zip(pre.der2.iter()).zip(d2.iter()) {
+                                *c = f64::from(pow)*p*vald
+                                        + f64::from(pow*(pow - 1))
+                                        *pre.der1[k1]*pre.der1[k2]*valdd;
                             }
                         },
                     }
@@ -444,9 +448,9 @@ impl Film {
                     for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
                         *c = p*valcos;
                     }
-                    for (k, &(k1, k2)) in d2.iter().enumerate() {
-                        cur.der2[k] = pre.der2[k]*valcos
-                                    - pre.der1[k1]*pre.der1[k2]*cur.val;
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(d2.iter()) {
+                        *c = p*valcos - pre.der1[k1]*pre.der1[k2]*cur.val;
                     }
                 },
                 Cos => {
@@ -456,9 +460,9 @@ impl Film {
                     for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
                         *c = -p*valsin;
                     }
-                    for (k, &(k1, k2)) in d2.iter().enumerate() {
-                        cur.der2[k] = -pre.der2[k]*valsin
-                                    - pre.der1[k1]*pre.der1[k2]*cur.val;
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(d2.iter()) {
+                        *c = -p*valsin - pre.der1[k1]*pre.der1[k2]*cur.val;
                     }
                 },
                 Sum(ref js) => {
@@ -509,188 +513,6 @@ impl Film {
                     }
                     for c in &mut cur.der2 {
                         *c = 0.0;
-                    }
-                },
-            }
-        }
-    }
-
-    pub unsafe fn ad_unchecked(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>,
-                               ret: &Retrieve, ws: &mut WorkSpace) {
-        use self::Oper::*;
-        use self::{Var, Par};
-        // Only resize up
-        if ws.len() < self.ops.len() {
-            ws.resize(self.ops.len(), Column::new());
-        }
-        for (i, op) in self.ops.iter().enumerate() {
-            let (left, right) = ws.split_at_mut(i);
-            let cur = right.get_unchecked_mut(0); // the i value from original
-            cur.der1.resize(d1.len(), 0.0);
-            cur.der2.resize(d2.len(), 0.0);
-            match *op {
-                Add(j) => {
-                    let pre = left.get_unchecked(i - 1);
-                    let oth = left.get_unchecked(j);
-                    cur.val = pre.val + oth.val;
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k)
-                            = pre.der1.get_unchecked(k)
-                            + oth.der1.get_unchecked(k);
-                    }
-                    for k in 0..(d2.len()) {
-                        *cur.der2.get_unchecked_mut(k)
-                            = pre.der2.get_unchecked(k)
-                            + oth.der2.get_unchecked(k);
-                    }
-                },
-                Mul(j) => {
-                    let pre = left.get_unchecked(i - 1);
-                    let oth = left.get_unchecked(j);
-                    cur.val = pre.val*oth.val;
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k)
-                            = pre.der1.get_unchecked(k)*oth.val
-                            + pre.val*oth.der1.get_unchecked(k);
-                    }
-                    for (k, &(k1, k2)) in d2.iter().enumerate() {
-                        *cur.der2.get_unchecked_mut(k)
-                            = pre.der2.get_unchecked(k)*oth.val
-                            + pre.val*oth.der2.get_unchecked(k)
-                            + pre.der1.get_unchecked(k1)*oth.der1.get_unchecked(k2)
-                            + pre.der1.get_unchecked(k2)*oth.der1.get_unchecked(k1);
-                    }
-                },
-                Neg => {
-                    let pre = left.get_unchecked(i - 1);
-                    cur.val = -pre.val;
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k)
-                            = -pre.der1.get_unchecked(k);
-                    }
-                    for k in 0..(d2.len()) {
-                        *cur.der2.get_unchecked_mut(k)
-                            = -pre.der2.get_unchecked(k);
-                    }
-                },
-                Pow(p) => {
-                    let pre = left.get_unchecked(i - 1);
-                    match p {
-                        0 => {
-                            cur.val = 1.0;
-                            for k in 0..(d1.len()) {
-                                *cur.der1.get_unchecked_mut(k) = 0.0;
-                            }
-                            for k in 0..(d2.len()) {
-                                *cur.der2.get_unchecked_mut(k) = 0.0;
-                            }
-                        },
-                        1 => {
-                            cur.val = pre.val;
-                            for k in 0..(d1.len()) {
-                                *cur.der1.get_unchecked_mut(k)
-                                    = *pre.der1.get_unchecked(k);
-                            }
-                            for k in 0..(d2.len()) {
-                                *cur.der2.get_unchecked_mut(k)
-                                    = *pre.der2.get_unchecked(k);
-                            }
-                        },
-                        _ => {
-                            cur.val = pre.val.powi(p);
-                            let vald = pre.val.powi(p - 1);
-                            let valdd = pre.val.powi(p - 2);
-                            for k in 0..(d1.len()) {
-                                *cur.der1.get_unchecked_mut(k)
-                                    = f64::from(p)*pre.der1.get_unchecked(k)*vald;
-                            }
-                            for (k, &(k1, k2)) in d2.iter().enumerate() {
-                                *cur.der2.get_unchecked_mut(k)
-                                    = f64::from(p)*pre.der2.get_unchecked(k)*vald
-                                    + f64::from(p*(p - 1))
-                                    *pre.der1.get_unchecked(k1)*pre.der1.get_unchecked(k2)
-                                    *valdd;
-                            }
-                        },
-                    }
-                },
-                Sin => {
-                    let pre = left.get_unchecked(i - 1);
-                    cur.val = pre.val.sin();
-                    let valcos = pre.val.cos();
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k)
-                            = pre.der1.get_unchecked(k)*valcos;
-                    }
-                    for (k, &(k1, k2)) in d2.iter().enumerate() {
-                        *cur.der2.get_unchecked_mut(k)
-                            = pre.der2.get_unchecked(k)*valcos
-                            - pre.der1.get_unchecked(k1)*pre.der1.get_unchecked(k2)*cur.val;
-                    }
-                },
-                Cos => {
-                    let pre = left.get_unchecked(i - 1);
-                    cur.val = pre.val.cos();
-                    let valsin = pre.val.sin();
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k)
-                            = -pre.der1.get_unchecked(k)*valsin;
-                    }
-                    for (k, &(k1, k2)) in d2.iter().enumerate() {
-                        *cur.der2.get_unchecked_mut(k)
-                            = -pre.der2.get_unchecked(k)*valsin
-                            - pre.der1.get_unchecked(k1)*pre.der1.get_unchecked(k2)*cur.val;
-                    }
-                },
-                Sum(ref js) => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val;
-                    for &j in js {
-                        let oth = &left[j];
-                        cur.val += oth.val;
-                    }
-
-                    for k in 0..(d1.len()) {
-                        cur.der1[k] = pre.der1[k];
-                        for &j in js {
-                            let oth = &left[j];
-                            cur.der1[k] += oth.der1[k];
-                        }
-                    }
-                    for k in 0..(d2.len()) {
-                        cur.der2[k] = pre.der2[k];
-                        for &j in js {
-                            let oth = &left[j];
-                            cur.der2[k] += oth.der2[k];
-                        }
-                    }
-                },
-                Variable(Var(id)) => {
-                    cur.val = ret.get_var(id);
-                    for (k, &did) in d1.iter().enumerate() {
-                        *cur.der1.get_unchecked_mut(k)
-                            = if id == did { 1.0 } else { 0.0 };
-                    }
-                    for k in 0..(d2.len()) {
-                        *cur.der2.get_unchecked_mut(k) = 0.0;
-                    }
-                },
-                Parameter(Par(id)) => {
-                    cur.val = ret.get_par(id);
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k) = 0.0;
-                    }
-                    for k in 0..(d2.len()) {
-                        *cur.der2.get_unchecked_mut(k) = 0.0;
-                    }
-                },
-                Float(val) => {
-                    cur.val = val;
-                    for k in 0..(d1.len()) {
-                        *cur.der1.get_unchecked_mut(k) = 0.0;
-                    }
-                    for k in 0..(d2.len()) {
-                        *cur.der2.get_unchecked_mut(k) = 0.0;
                     }
                 },
             }

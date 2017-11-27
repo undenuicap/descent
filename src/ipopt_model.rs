@@ -74,10 +74,8 @@ pub struct IpoptModel {
 fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace) -> Column {
     let mut col = Column::new();
-    //unsafe { film.ad_unchecked(&info.lin, &Vec::new(), store, ws); }
     film.ad(&info.lin, &Vec::new(), store, ws);
     col.der1 = film.last_in(ws).der1.clone();
-    //unsafe { film.ad_unchecked(&info.nlin, &info.quad, store, ws); }
     film.ad(&info.nlin, &info.quad, store, ws);
     col.der2 = film.last_in(ws).der2.clone();
     col
@@ -85,7 +83,6 @@ fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
 
 fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace, col: &mut Column) {
-    //unsafe { film.ad_unchecked(&info.nlin, &info.nquad, store, ws); }
     film.ad(&info.nlin, &info.nquad, store, ws);
     *col = film.last_in(ws).clone();
     // Swap might grow memory over time till all films have columns with the
