@@ -29,4 +29,9 @@ fn main() {
     }
     m.silence();
     m.solve();
+
+    // Make sure debug is on in release (set in cargo)
+    //cargo build --release
+    //cargo build --release --example problem
+    //valgrind --tool=callgrind --dump-instr=yes --collect-jumps=yes ./problem
 }

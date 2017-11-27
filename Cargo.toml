@@ -6,3 +6,6 @@ authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 [dependencies]
 libc = "0.2.32"
 fnv = "1.0.5"
+
+[profile.release]
+debug = 2
