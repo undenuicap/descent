@@ -27,7 +27,7 @@ fn main() {
         //println!("{:?}", e);
         m.add_con(e, 0.0, 0.0);
     }
-    m.silence();
+    //m.silence();
     m.solve();
 
     // Make sure debug is on in release (set in cargo)
