@@ -540,6 +540,142 @@ impl Film {
         }
     }
 
+    pub fn ad_back(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
+            ws: &mut WorkSpace) -> HashMap<ID, f64> {
+        use self::Oper::*;
+        use self::{Var, Par};
+        // Only resize up
+        if ws.len() < self.ops.len() {
+            ws.resize(self.ops.len(), Column::new());
+        }
+        // Get values
+        for (i, op) in self.ops.iter().enumerate() {
+            let (left, right) = ws.split_at_mut(i);
+            let cur = &mut right[0]; // the i value from original
+            cur.der1.resize(1, 0.0); // for adjoint values later
+            match *op {
+                Add(j) => {
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = pre.val + oth.val;
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = oth.val - pre.val;
+                },
+                Mul(j) => {
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = pre.val*oth.val;
+                },
+                Neg => {
+                    let pre = &left[i - 1];
+                    cur.val = -pre.val;
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.powi(pow);
+                },
+                Sin => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.sin();
+                },
+                Cos => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.cos();
+                },
+                Sum(ref js) => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val;
+                    for &j in js {
+                        let oth = &left[j];
+                        cur.val += oth.val;
+                    }
+                },
+                Square => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val*pre.val;
+                },
+                Variable(Var(id)) => {
+                    cur.val = ret.get_var(id);
+                },
+                Parameter(Par(id)) => {
+                    cur.val = ret.get_par(id);
+                },
+                Float(val) => {
+                    cur.val = val;
+                },
+            }
+        }
+
+        // Go through backwards
+        // Hrmm need another structure to do this, so that each op
+        // knows who is dependent on it...  With our way of construction,
+        // each op can only have one or two parents which depend on it.
+        // Actually is it only 1?
+        // Could easily store this, or could actually just directly copy
+        // values into place: A(0) has value a, copy a*1 to i - 1, a*1 to 0.
+        // How does the hessian look?
+        // If limit to binary operators, just need to calc one sec deriv per
+        // operator, and pass that on to both children.  Hrmm probably not...
+        let mut der1: HashMap<ID, f64> = HashMap::new();
+        for &id in d1 {
+            der1.insert(id, 0.0);
+        }
+        ws.last_mut().unwrap().der1[0] = 1.0;
+        for (i, op) in self.ops.iter().enumerate().rev() {
+            let (left, right) = ws.split_at_mut(i);
+            let cur = &right[0]; // the i value from original
+            match *op {
+                Add(j) => {
+                    left[i - 1].der1[0] = cur.der1[0];
+                    left[j].der1[0] = cur.der1[0];
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    left[i - 1].der1[0] = -cur.der1[0];
+                    left[j].der1[0] = cur.der1[0];
+                },
+                Mul(j) => {
+                    left[i - 1].der1[0] = left[j].val*cur.der1[0];
+                    left[j].der1[0] = left[i - 1].val*cur.der1[0];
+                },
+                Neg => {
+                    left[i - 1].der1[0] = -cur.der1[0];
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    left[i - 1].der1[0] = f64::from(pow)*
+                        left[i - 1].val.powi(pow - 1)*cur.der1[0];
+                },
+                Sin => {
+                    left[i - 1].der1[0] = left[i - 1].val.cos()*cur.der1[0];
+                },
+                Cos => {
+                    left[i - 1].der1[0] = -left[i - 1].val.sin()*cur.der1[0];
+                },
+                Sum(ref js) => {
+                    left[i - 1].der1[0] = cur.der1[0];
+                    for &j in js {
+                        left[j].der1[0] = cur.der1[0];
+                    }
+                },
+                Square => {
+                    left[i - 1].der1[0] = 2.0*left[i - 1].val*cur.der1[0];
+                },
+                Variable(Var(id)) => {
+                    // Currently must be taking derivative wrt all vars present
+                    *der1.get_mut(&id).unwrap() += cur.der1[0];
+                },
+                _ => {},
+            }
+        }
+        der1
+    }
+
     // Should not be called on short workspace or empty film
     pub fn last_in<'a>(&self, ws: &'a WorkSpace) -> &'a Column {
         &ws[self.ops.len() - 1]
@@ -2285,6 +2421,27 @@ mod tests {
         assert_eq!(ws[3].der2[0], -4.0*(10.0_f64.cos()));
     }
 
+    #[test]
+    fn film_back() {
+        use expression::{Var, Film};
+        let mut store = Store::new();
+        store.vars.push(5.0);
+        store.vars.push(4.0);
+
+        let x1 = Var(0);
+        let x2 = Var(1);
+
+        let f = x1*x2 + NumOpsF::sin(x1);
+        let mut ws = WorkSpace::new();
+        //let finfo = f.get_info();
+        //println!("{:?}", f);
+        //println!("{:?}", finfo);
+        let der = f.ad_back(&vec![0, 1], &Vec::new(), &store, &mut ws);
+        println!("{:?}", der);
+        assert_eq!(*der.get(&0).unwrap(), 5.0_f64.cos() + 4.0);
+        assert_eq!(*der.get(&1).unwrap(), 5.0);
+    }
+
     #[bench]
     fn film_quad_deriv1(b: &mut test::Bencher) {
         use expression::{Var, Film};
@@ -2346,4 +2503,5 @@ mod tests {
         assert_eq!(ws.last().unwrap().der1.len(), n);
         assert_eq!(ws.last().unwrap().der2.len(), n);
     }
+
 }
