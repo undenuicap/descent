@@ -208,10 +208,11 @@ enum Oper {
     Sub(usize),
     Mul(usize),
     Neg, // negate
-    Pow(i32),
+    Pow(i32), // to be safe, should not be 0 or 1, 2 should use Square
     Sin,
     Cos,
     Sum(Vec<usize>),
+    Square,
     Variable(Var),
     Parameter(Par),
     Float(f64),
@@ -259,8 +260,24 @@ pub trait NumOpsF {
 impl NumOpsF for Film {
     fn powi(mut self, p: i32) -> Film {
         // When empty don't do anything
-        if !self.ops.is_empty() {
-            self.add_op(Oper::Pow(p));
+        if self.ops.is_empty() {
+            return self;
+        }
+
+        // Match now so don't have to later
+        match p {
+            0 => {
+                self.add_op(Oper::Float(1.0));
+            },
+            1 => {
+                // don't add anything
+            },
+            2 => {
+                self.add_op(Oper::Square);
+            },
+            _ => {
+                self.add_op(Oper::Pow(p));
+            },
         }
         self
     }
@@ -417,43 +434,20 @@ impl Film {
                     }
                 },
                 Pow(pow) => {
+                    // Assume it is not 0 or 1
                     let pre = &left[i - 1];
-                    match pow {
-                        0 => {
-                            cur.val = 1.0;
-                            for c in &mut cur.der1 {
-                                *c = 0.0;
-                            }
-                            for c in &mut cur.der2 {
-                                *c = 0.0;
-                            }
-                        },
-                        1 => {
-                            cur.val = pre.val;
-                            for (c, p) in cur.der1.iter_mut()
-                                    .zip(pre.der1.iter()) {
-                                *c = *p;
-                            }
-                            for (c, p) in cur.der2.iter_mut()
-                                    .zip(pre.der2.iter()) {
-                                *c = *p;
-                            }
-                        },
-                        _ => {
-                            cur.val = pre.val.powi(pow);
-                            let vald = pre.val.powi(pow - 1);
-                            let valdd = pre.val.powi(pow - 2);
-                            for (c, p) in cur.der1.iter_mut()
-                                    .zip(pre.der1.iter()) {
-                                *c = f64::from(pow)*p*vald;
-                            }
-                            for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                                    .zip(pre.der2.iter()).zip(d2.iter()) {
-                                *c = f64::from(pow)*p*vald
-                                        + f64::from(pow*(pow - 1))
-                                        *pre.der1[k1]*pre.der1[k2]*valdd;
-                            }
-                        },
+                    cur.val = pre.val.powi(pow);
+                    let vald = pre.val.powi(pow - 1);
+                    let valdd = pre.val.powi(pow - 2);
+                    for (c, p) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()) {
+                        *c = f64::from(pow)*p*vald;
+                    }
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(d2.iter()) {
+                        *c = f64::from(pow)*p*vald
+                                + f64::from(pow*(pow - 1))
+                                *pre.der1[k1]*pre.der1[k2]*valdd;
                     }
                 },
                 Sin => {
@@ -501,6 +495,18 @@ impl Film {
                             let oth = &left[j];
                             cur.der2[k] += oth.der2[k];
                         }
+                    }
+                },
+                Square => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val*pre.val;
+                    for (c, p) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()) {
+                        *c = 2.0*p*pre.val;
+                    }
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(d2.iter()) {
+                        *c = 2.0*p*pre.val + 2.0*pre.der1[k1]*pre.der1[k2];
                     }
                 },
                 Variable(Var(id)) => {
@@ -560,6 +566,8 @@ impl Film {
                     degs[i - 1].clone()
                 },
                 Pow(p) => {
+                    // Even though shouldn't have 0 or 1, might as well match
+                    // anyway
                     match p {
                         0 => {
                             Deg::new()
@@ -581,6 +589,9 @@ impl Film {
                         deg = deg.union(&degs[j]);
                     }
                     deg
+                },
+                Square => {
+                    degs[i - 1].cross(&degs[i - 1])
                 },
                 Sin | Cos => {
                     degs[i - 1].highest()
