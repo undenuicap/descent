@@ -205,6 +205,7 @@ impl From<Deg> for FilmInfo {
 #[derive(Debug, Clone)]
 enum Oper {
     Add(usize),
+    Sub(usize),
     Mul(usize),
     Neg, // negate
     Pow(i32),
@@ -375,6 +376,20 @@ impl Film {
                         *c = p + o;
                     }
                 },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = oth.val - pre.val;
+                    for ((c, p), o) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
+                        *c = o - p;
+                    }
+                    for ((c, p), o) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
+                        *c = o - p;
+                    }
+                },
                 Mul(j) => {
                     let pre = &left[i - 1];
                     let oth = &left[j];
@@ -535,7 +550,7 @@ impl Film {
         let mut degs: Vec<Deg> = Vec::new();
         for (i, op) in self.ops.iter().enumerate() {
             let d = match *op {
-                Add(j) => {
+                Add(j) | Sub(j) => {
                     degs[i - 1].union(&degs[j])
                 },
                 Mul(j) => {
@@ -595,8 +610,14 @@ impl Film {
         use self::Oper::*;
         for op in self.ops.iter_mut() {
             match *op {
-                Add(ref mut j) => *j = *j + n,
-                Mul(ref mut j) => *j = *j + n,
+                Add(ref mut j) | Sub(ref mut j) | Mul(ref mut j) => {
+                    *j = *j + n;
+                },
+                Sum(ref mut js) => {
+                    for j in js {
+                        *j = *j + n;
+                    }
+                },
                 _ => (),
             }
         }
@@ -1744,8 +1765,7 @@ impl std::ops::Sub<Film> for Film {
         } else {
             let n = self.ops.len();
             self.append(other);
-            self.add_op(Oper::Neg);
-            self.add_op(Oper::Add(n - 1));
+            self.add_op(Oper::Sub(n - 1));
             self
         }
     }
@@ -2265,8 +2285,8 @@ mod tests {
             store.vars.push(0.5);
         }
         let mut e = Film::from(0.0);
-        for x in &xs {
-            e = e + 3.0*(Film::from(*x) - 1.0).powi(2) + 5.0;
+        for &x in &xs {
+            e = e + 3.0*(x - 1.0).powi(2) + 5.0;
         }
         let mut ws = WorkSpace::new();
         //println!("{:?}", e);
@@ -2296,8 +2316,8 @@ mod tests {
             store.vars.push(0.5);
         }
         let mut e = Film::from(0.0);
-        for x in &xs {
-            e = e + 3.0*(Film::from(*x) - 1.0).powi(2) + 5.0;
+        for &x in &xs {
+            e = e + 3.0*(x - 1.0).powi(2) + 5.0;
         }
         let mut ws = WorkSpace::new();
         //println!("{:?}", e);
