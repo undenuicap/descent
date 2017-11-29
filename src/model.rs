@@ -52,8 +52,8 @@ impl Solution {
     }
 
     pub fn value(&self, film: &Film) -> f64 {
-        let mut ws = WorkSpace::new(); // could pass this in
-        film.eval(&self.store, &mut ws)
+        let mut ns = Vec::new(); // could pass this in
+        film.eval(&self.store, &mut ns)
     }
 
     pub fn var(&self, Var(id): Var) -> f64 {

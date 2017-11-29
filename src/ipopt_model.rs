@@ -10,7 +10,6 @@ use self::fnv::FnvHashMap;
 use std::ptr;
 use std::ffi::CString;
 use std::f64;
-use std::mem;
 
 struct Variable {
     lb: f64,
@@ -75,19 +74,25 @@ fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace) -> Column {
     let mut col = Column::new();
     //col.der1 = film.full_fwd(&info.lin, &Vec::new(), store, ws).der1.clone();
-    col.der1 = film.der1_rev(&info.lin, store, ws).der1.clone();
-    col.der2 = film.full_fwd(&info.nlin, &info.quad, store, ws).der2.clone();
+    film.eval(store, &mut ws.ns);
+    col.der1 = film.der1_rev(&info.lin, store, &ws.ns, &mut ws.nas,
+                             &mut ws.ids);
+    col.der2 = film.full_fwd(&info.nlin, &info.quad, store,
+                             &mut ws.cols).der2.clone();
     col
 }
 
 fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace, col: &mut Column) {
     if info.nlin.is_empty() {
-        col.val = film.eval(store, ws);
+        col.val = film.eval(store, &mut ws.ns);
     } else if info.nquad.is_empty() {
-        *col = film.der1_rev(&info.nlin, store, ws).clone();
+        col.val = film.eval(store, &mut ws.ns);
+        col.der1 = film.der1_rev(&info.nlin, store, &ws.ns, &mut ws.nas,
+                              &mut ws.ids);
     } else {
-        *col = film.full_fwd(&info.nlin, &info.nquad, store, ws).clone();
+        *col = film.full_fwd(&info.nlin, &info.nquad, store,
+                             &mut ws.cols).clone();
     }
 }
 

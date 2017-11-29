@@ -14,8 +14,8 @@ fn main() {
     // Below values are: Iter, T in IPOPT, T in NLP (this), T in NLP (mo)
     //let n: usize = 100000;
     //let n: usize = 10000; // uses too much memory before solving
-    //let n: usize = 5000; // 8, 0.054, 0.024, 0.021
-    let n: usize = 1000; // 75, 0.080, 0.050, 0.035
+    //let n: usize = 5000; // 8, 0.054, 0.021, 0.021
+    let n: usize = 1000; // 75, 0.080, 0.045, 0.035
     //let n: usize = 100; // 22, 0.006, 0.001, 0.001
     //let n: usize = 10;
     
