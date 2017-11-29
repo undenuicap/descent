@@ -74,21 +74,21 @@ pub struct IpoptModel {
 fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace) -> Column {
     let mut col = Column::new();
-    film.ad(&info.lin, &Vec::new(), store, ws);
-    col.der1 = film.last_in(ws).der1.clone();
-    film.ad(&info.nlin, &info.quad, store, ws);
-    col.der2 = film.last_in(ws).der2.clone();
+    //col.der1 = film.full_fwd(&info.lin, &Vec::new(), store, ws).der1.clone();
+    col.der1 = film.der1_rev(&info.lin, store, ws).der1.clone();
+    col.der2 = film.full_fwd(&info.nlin, &info.quad, store, ws).der2.clone();
     col
 }
 
 fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
              ws: &mut WorkSpace, col: &mut Column) {
-    film.ad(&info.nlin, &info.nquad, store, ws);
-    *col = film.last_in(ws).clone();
-    // Swap might grow memory over time till all films have columns with the
-    // same capacity (as they leak out of workspace here).
-    // Wasn't any faster anyway (at least yet).
-    //mem::swap(col, film.last_mut_in(ws));
+    if info.nlin.is_empty() {
+        col.val = film.eval(store, ws);
+    } else if info.nquad.is_empty() {
+        *col = film.der1_rev(&info.nlin, store, ws).clone();
+    } else {
+        *col = film.full_fwd(&info.nlin, &info.nquad, store, ws).clone();
+    }
 }
 
 impl IpoptModel {
@@ -279,6 +279,8 @@ impl IpoptModel {
 
                 let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
 
+                // This and others might throw and exception.  How would we
+                // catch?
                 ipopt_status = unsafe {
                     ipopt::IpoptSolve(prob.prob,
                                       sol.store.vars.as_mut_ptr(),

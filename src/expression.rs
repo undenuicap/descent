@@ -330,6 +330,7 @@ impl NumOpsF for Par {
 #[derive(Debug, Clone, Default)]
 pub struct Column {
     pub val: f64,
+    pub adj: f64, // Adjoint
     pub der1: Vec<f64>,
     pub der2: Vec<f64>,
 }
@@ -366,8 +367,83 @@ pub struct Film {
 }
 
 impl Film {
-    pub fn ad(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
-            ws: &mut WorkSpace) {
+    // Should probably choose approach based on FilmInfo.
+    // No derivatives: stand alone eval
+    // No second derivatives: rev
+    // Other wise full method: initially fwd, later develop fwd + rev
+    pub fn eval(&self, ret: &Retrieve, ws: &mut WorkSpace) -> f64 {
+        use self::Oper::*;
+        use self::{Var, Par};
+        // Only resize up
+        if ws.len() < self.ops.len() {
+            ws.resize(self.ops.len(), Column::new());
+        }
+        // Get values
+        for (i, op) in self.ops.iter().enumerate() {
+            let (left, right) = ws.split_at_mut(i);
+            let cur = &mut right[0]; // the i value from original
+            match *op {
+                Add(j) => {
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = pre.val + oth.val;
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = oth.val - pre.val;
+                },
+                Mul(j) => {
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = pre.val*oth.val;
+                },
+                Neg => {
+                    let pre = &left[i - 1];
+                    cur.val = -pre.val;
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.powi(pow);
+                },
+                Sin => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.sin();
+                },
+                Cos => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.cos();
+                },
+                Sum(ref js) => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val;
+                    for &j in js {
+                        let oth = &left[j];
+                        cur.val += oth.val;
+                    }
+                },
+                Square => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val*pre.val;
+                },
+                Variable(Var(id)) => {
+                    cur.val = ret.get_var(id);
+                },
+                Parameter(Par(id)) => {
+                    cur.val = ret.get_par(id);
+                },
+                Float(val) => {
+                    cur.val = val;
+                },
+            }
+        }
+        self.last_in_mut(ws).val
+    }
+
+    pub fn full_fwd<'a>(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>,
+                        ret: &Retrieve, ws: &'a mut WorkSpace) -> &'a Column {
         use self::Oper::*;
         use self::{Var, Par};
         // Only resize up
@@ -538,142 +614,83 @@ impl Film {
                 },
             }
         }
+        self.last_in_mut(ws)
     }
 
-    pub fn ad_back(&self, d1: &Vec<ID>, d2: &Vec<(usize, usize)>, ret: &Retrieve,
-            ws: &mut WorkSpace) -> HashMap<ID, f64> {
+    // Assume each operator has only one dependent.
+    // If not then would need to rework.  Probably not an issue as can maybe
+    // just sum adjoint (would just need to make sure they are set to 0 first).
+    pub fn der1_rev<'a>(&self, d1: &Vec<ID>, ret: &Retrieve,
+                        ws: &'a mut WorkSpace) -> &'a Column {
         use self::Oper::*;
         use self::{Var, Par};
-        // Only resize up
-        if ws.len() < self.ops.len() {
-            ws.resize(self.ops.len(), Column::new());
-        }
-        // Get values
-        for (i, op) in self.ops.iter().enumerate() {
-            let (left, right) = ws.split_at_mut(i);
-            let cur = &mut right[0]; // the i value from original
-            cur.der1.resize(1, 0.0); // for adjoint values later
-            match *op {
-                Add(j) => {
-                    let pre = &left[i - 1];
-                    let oth = &left[j];
-                    cur.val = pre.val + oth.val;
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    let pre = &left[i - 1];
-                    let oth = &left[j];
-                    cur.val = oth.val - pre.val;
-                },
-                Mul(j) => {
-                    let pre = &left[i - 1];
-                    let oth = &left[j];
-                    cur.val = pre.val*oth.val;
-                },
-                Neg => {
-                    let pre = &left[i - 1];
-                    cur.val = -pre.val;
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    let pre = &left[i - 1];
-                    cur.val = pre.val.powi(pow);
-                },
-                Sin => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val.sin();
-                },
-                Cos => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val.cos();
-                },
-                Sum(ref js) => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val;
-                    for &j in js {
-                        let oth = &left[j];
-                        cur.val += oth.val;
-                    }
-                },
-                Square => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val*pre.val;
-                },
-                Variable(Var(id)) => {
-                    cur.val = ret.get_var(id);
-                },
-                Parameter(Par(id)) => {
-                    cur.val = ret.get_par(id);
-                },
-                Float(val) => {
-                    cur.val = val;
-                },
-            }
-        }
 
-        // Go through backwards
-        // Hrmm need another structure to do this, so that each op
-        // knows who is dependent on it...  With our way of construction,
-        // each op can only have one or two parents which depend on it.
-        // Actually is it only 1?
-        // Could easily store this, or could actually just directly copy
-        // values into place: A(0) has value a, copy a*1 to i - 1, a*1 to 0.
-        // How does the hessian look?
-        // If limit to binary operators, just need to calc one sec deriv per
-        // operator, and pass that on to both children.  Hrmm probably not...
+        // Populate values first
+        self.eval(ret, ws);
+
+        // Probably there is a faster way than this.
         let mut der1: HashMap<ID, f64> = HashMap::new();
         for &id in d1 {
             der1.insert(id, 0.0);
         }
-        ws.last_mut().unwrap().der1[0] = 1.0;
+
+        // Go through in reverse
+        self.last_in_mut(ws).adj = 1.0;
         for (i, op) in self.ops.iter().enumerate().rev() {
             let (left, right) = ws.split_at_mut(i);
             let cur = &right[0]; // the i value from original
             match *op {
                 Add(j) => {
-                    left[i - 1].der1[0] = cur.der1[0];
-                    left[j].der1[0] = cur.der1[0];
+                    left[i - 1].adj = cur.adj;
+                    left[j].adj = cur.adj;
                 },
                 Sub(j) => {
                     // Take note of order where oth - pre 
-                    left[i - 1].der1[0] = -cur.der1[0];
-                    left[j].der1[0] = cur.der1[0];
+                    left[i - 1].adj = -cur.adj;
+                    left[j].adj = cur.adj;
                 },
                 Mul(j) => {
-                    left[i - 1].der1[0] = left[j].val*cur.der1[0];
-                    left[j].der1[0] = left[i - 1].val*cur.der1[0];
+                    left[i - 1].adj = left[j].val*cur.adj;
+                    left[j].adj = left[i - 1].val*cur.adj;
                 },
                 Neg => {
-                    left[i - 1].der1[0] = -cur.der1[0];
+                    left[i - 1].adj = -cur.adj;
                 },
                 Pow(pow) => {
                     // Assume it is not 0 or 1
-                    left[i - 1].der1[0] = f64::from(pow)*
-                        left[i - 1].val.powi(pow - 1)*cur.der1[0];
+                    left[i - 1].adj = f64::from(pow)*
+                        left[i - 1].val.powi(pow - 1)*cur.adj;
                 },
                 Sin => {
-                    left[i - 1].der1[0] = left[i - 1].val.cos()*cur.der1[0];
+                    left[i - 1].adj = left[i - 1].val.cos()*cur.adj;
                 },
                 Cos => {
-                    left[i - 1].der1[0] = -left[i - 1].val.sin()*cur.der1[0];
+                    left[i - 1].adj = -left[i - 1].val.sin()*cur.adj;
                 },
                 Sum(ref js) => {
-                    left[i - 1].der1[0] = cur.der1[0];
+                    left[i - 1].adj = cur.adj;
                     for &j in js {
-                        left[j].der1[0] = cur.der1[0];
+                        left[j].adj = cur.adj;
                     }
                 },
                 Square => {
-                    left[i - 1].der1[0] = 2.0*left[i - 1].val*cur.der1[0];
+                    left[i - 1].adj = 2.0*left[i - 1].val*cur.adj;
                 },
                 Variable(Var(id)) => {
-                    // Currently must be taking derivative wrt all vars present
-                    *der1.get_mut(&id).unwrap() += cur.der1[0];
+                    if let Some(v) = der1.get_mut(&id) {
+                        *v += cur.adj;
+                    }
                 },
                 _ => {},
             }
         }
-        der1
+        let col = self.last_in_mut(ws);
+        col.der1.resize(0, 0.0);
+        col.der2.resize(0, 0.0);
+        for id in d1 {
+            col.der1.push(*der1.get(id).unwrap());
+        }
+        col
     }
 
     // Should not be called on short workspace or empty film
@@ -682,7 +699,7 @@ impl Film {
     }
 
     // Should not be called on short workspace or empty film
-    pub fn last_mut_in<'a>(&self, ws: &'a mut WorkSpace) -> &'a mut Column {
+    pub fn last_in_mut<'a>(&self, ws: &'a mut WorkSpace) -> &'a mut Column {
         &mut ws[self.ops.len() - 1]
     }
 
@@ -2277,26 +2294,29 @@ mod tests {
         // Get constant first derivatives
         // Call on parameter change
         // Copy out and store first derivatives
-        film.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
-        assert_eq!(ws.len(), 7);
-        assert_eq!(ws[6].val, 14.0);
-        assert_eq!(ws[6].der1[0], 1.0); // Var(0)
+        {
+            let col = film.full_fwd(&finfo.lin, &Vec::new(), &store, &mut ws);
+            assert_eq!(col.val, 14.0);
+            assert_eq!(col.der1[0], 1.0); // Var(0)
+        }
 
         // Get constant second derivatives
         // Call on parameter change
         // Copy out and store second derivatives
-        film.ad(&finfo.nlin, &finfo.quad, &store, &mut ws);
-        assert_eq!(ws.len(), 7);
-        assert_eq!(ws[6].val, 14.0);
-        assert_eq!(ws[6].der1[0], 6.0); // Var(1)
-        assert_eq!(ws[6].der2[0], 2.0); // Var(1), Var(1)
+        {
+            let col = film.full_fwd(&finfo.nlin, &finfo.quad, &store, &mut ws);
+            assert_eq!(col.val, 14.0);
+            assert_eq!(col.der1[0], 6.0); // Var(1)
+            assert_eq!(col.der2[0], 2.0); // Var(1), Var(1)
+        }
 
         // Get chaning derivatives
         // Call every time
-        film.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
-        assert_eq!(ws.len(), 7);
-        assert_eq!(ws[6].val, 14.0);
-        assert_eq!(ws[6].der1[0], 6.0); // Var(1)
+        {
+            let col = film.full_fwd(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+            assert_eq!(col.val, 14.0);
+            assert_eq!(col.der1[0], 6.0); // Var(1)
+        }
     }
 
     #[test]
@@ -2345,11 +2365,10 @@ mod tests {
         let mut ws = WorkSpace::new();
         //println!("{:?}", finfo);
         //println!("{:?}", f);
-        f.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
+        let col = f.full_fwd(&finfo.lin, &Vec::new(), &store, &mut ws);
 
-        assert_eq!(ws.len(), 7);
-        assert_eq!(ws[6].val, 60.0);
-        assert_eq!(ws[6].der1[0], 4.0);
+        assert_eq!(col.val, 60.0);
+        assert_eq!(col.der1[0], 4.0);
     }
 
     // Only expect to work when have operator overloading creating sums
@@ -2367,10 +2386,9 @@ mod tests {
     //    //println!("{:?}", f);
     //    //println!("{:?}", finfo);
     //    let mut ws = WorkSpace::new();
-    //    f.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
+    //    let col = f.full_fwd(&finfo.lin, &Vec::new(), &store, &mut ws);
 
-    //    assert_eq!(ws.len(), 5);
-    //    assert_eq!(ws[4].val, 20.0);
+    //    assert_eq!(col.val, 20.0);
     //}
 
     #[test]
@@ -2389,12 +2407,11 @@ mod tests {
         assert_eq!(finfo.nlin.len(), 1);
         assert_eq!(finfo.nquad.len(), 1);
 
-        f.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+        let col = f.full_fwd(&finfo.nlin, &finfo.nquad, &store, &mut ws);
 
-        assert_eq!(ws.len(), 4);
-        assert_eq!(ws[3].val, 10.0_f64.sin());
-        assert_eq!(ws[3].der1[0], 2.0*(10.0_f64.cos()));
-        assert_eq!(ws[3].der2[0], -4.0*(10.0_f64.sin()));
+        assert_eq!(col.val, 10.0_f64.sin());
+        assert_eq!(col.der1[0], 2.0*(10.0_f64.cos()));
+        assert_eq!(col.der2[0], -4.0*(10.0_f64.sin()));
     }
 
     #[test]
@@ -2413,16 +2430,15 @@ mod tests {
         assert_eq!(finfo.nlin.len(), 1);
         assert_eq!(finfo.nquad.len(), 1);
 
-        f.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+        let col = f.full_fwd(&finfo.nlin, &finfo.nquad, &store, &mut ws);
 
-        assert_eq!(ws.len(), 4);
-        assert_eq!(ws[3].val, 10.0_f64.cos());
-        assert_eq!(ws[3].der1[0], -2.0*(10.0_f64.sin()));
-        assert_eq!(ws[3].der2[0], -4.0*(10.0_f64.cos()));
+        assert_eq!(col.val, 10.0_f64.cos());
+        assert_eq!(col.der1[0], -2.0*(10.0_f64.sin()));
+        assert_eq!(col.der2[0], -4.0*(10.0_f64.cos()));
     }
 
     #[test]
-    fn film_back() {
+    fn film_rev() {
         use expression::{Var, Film};
         let mut store = Store::new();
         store.vars.push(5.0);
@@ -2436,10 +2452,10 @@ mod tests {
         //let finfo = f.get_info();
         //println!("{:?}", f);
         //println!("{:?}", finfo);
-        let der = f.ad_back(&vec![0, 1], &Vec::new(), &store, &mut ws);
-        println!("{:?}", der);
-        assert_eq!(*der.get(&0).unwrap(), 5.0_f64.cos() + 4.0);
-        assert_eq!(*der.get(&1).unwrap(), 5.0);
+        let col = f.der1_rev(&vec![0, 1], &store, &mut ws);
+        assert_eq!(col.val, 20.0 + 5.0_f64.sin());
+        assert_eq!(col.der1[0], 5.0_f64.cos() + 4.0);
+        assert_eq!(col.der1[1], 5.0);
     }
 
     #[bench]
@@ -2465,12 +2481,12 @@ mod tests {
         assert_eq!(finfo.quad.len(), n);
         assert_eq!(finfo.nquad.len(), 0);
         b.iter(|| {
-            //e.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
-            //e.ad(&finfo.nlin, &finfo.quad, &store, &mut ws);
-            e.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+            //e.full_fwd(&finfo.lin, &Vec::new(), &store, &mut ws);
+            //e.full_fwd(&finfo.nlin, &finfo.quad, &store, &mut ws);
+            e.full_fwd(&finfo.nlin, &finfo.nquad, &store, &mut ws);
         });
-        assert_eq!(ws.last().unwrap().der1.len(), n);
-        assert_eq!(ws.last().unwrap().der2.len(), 0);
+        assert_eq!(e.last_in(&ws).der1.len(), n);
+        assert_eq!(e.last_in(&ws).der2.len(), 0);
     }
 
     #[bench]
@@ -2496,12 +2512,12 @@ mod tests {
         assert_eq!(finfo.quad.len(), n);
         assert_eq!(finfo.nquad.len(), 0);
         b.iter(|| {
-            //e.ad(&finfo.lin, &Vec::new(), &store, &mut ws);
-            e.ad(&finfo.nlin, &finfo.quad, &store, &mut ws);
-            //e.ad(&finfo.nlin, &finfo.nquad, &store, &mut ws);
+            //e.full_fwd(&finfo.lin, &Vec::new(), &store, &mut ws);
+            e.full_fwd(&finfo.nlin, &finfo.quad, &store, &mut ws);
+            //e.full_fwd(&finfo.nlin, &finfo.nquad, &store, &mut ws);
         });
-        assert_eq!(ws.last().unwrap().der1.len(), n);
-        assert_eq!(ws.last().unwrap().der2.len(), n);
+        assert_eq!(e.last_in(&ws).der1.len(), n);
+        assert_eq!(e.last_in(&ws).der2.len(), n);
     }
 
 }

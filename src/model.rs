@@ -53,12 +53,7 @@ impl Solution {
 
     pub fn value(&self, film: &Film) -> f64 {
         let mut ws = WorkSpace::new(); // could pass this in
-        film.ad(&Vec::new(), &Vec::new(), &self.store, &mut ws);
-        if let Some(l) = ws.last() {
-            l.val
-        } else {
-            0.0
-        }
+        film.eval(&self.store, &mut ws)
     }
 
     pub fn var(&self, Var(id): Var) -> f64 {

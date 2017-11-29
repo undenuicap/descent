@@ -6,13 +6,17 @@ use descent::model::{Model};
 
 fn main() {
     // Large expression way worse than lots of small expressions.
-    // Can handle 100000 for constraints, but even 5000 blows up for objective
-    // Must be some exponential growth
+    // Some exponential growth
+    // Here in particular the objective is the problem
+    // Can handle this somewhat when under certain conditions can perform
+    // reverse method.  Note this doesn't solve issue of slow start up
+    // (when using forward for constant derivatives).
+    // Below values are: Iter, T in IPOPT, T in NLP (this), T in NLP (mo)
     //let n: usize = 100000;
     //let n: usize = 10000; // uses too much memory before solving
-    //let n: usize = 5000;
-    let n: usize = 1000; // 75 iters IPOPT 0.100, NLP: 0.474 vs 0.035
-    //let n: usize = 100; // 22 iters IPOPT 0.006, NLP: 0.002 vs 0.001
+    //let n: usize = 5000; // 8, 0.054, 0.024, 0.021
+    let n: usize = 1000; // 75, 0.080, 0.050, 0.035
+    //let n: usize = 100; // 22, 0.006, 0.001, 0.001
     //let n: usize = 10;
     
     let mut m = IpoptModel::new();
