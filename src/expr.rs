@@ -11,6 +11,7 @@ pub trait Retrieve {
     fn get_par(&self, pid: ID) -> f64;
 }
 
+/// Storage for variable and parameter values.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
     pub vars: Vec<f64>,
@@ -33,25 +34,14 @@ impl Retrieve for Store {
     }
 }
 
+/// Variable identifier.
 #[derive(Debug, Clone, Copy)]
 pub struct Var(pub ID);
 
+/// Parameter identifier.
 #[derive(Debug, Clone, Copy)]
 pub struct Par(pub ID);
 
-/// Representation of the degree of variables from an expression.
-///
-/// - `lin` and `nlin` must be disjoint
-/// - `quad` and `nquad` must be disjoint
-/// - `ID`s in pairs must be ordered
-/// - all `ID`s in `quad` and `nquad` must be in `nlin`
-#[derive(Debug, PartialEq, Clone, Default)]
-pub struct Degree {
-    lin: HashSet<ID>,
-    nlin: HashSet<ID>,
-    quad: HashSet<(ID, ID)>,
-    nquad: HashSet<(ID, ID)>,
-}
 
 /// Order second derivative pairs.
 ///
@@ -60,6 +50,7 @@ fn order(a: ID, b: ID) -> (ID, ID) {
     if a < b { (b, a) } else { (a, b) }
 }
 
+/// Cross two sets of IDs.
 fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>,
              target: &mut HashSet<(ID, ID)>)  {
     for &id1 in id1s {
@@ -67,6 +58,20 @@ fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>,
             target.insert(order(id1, id2));
         }
     }
+}
+
+/// Representation of the degree of variables from an expression.
+///
+/// - `lin` and `nlin` must be disjoint
+/// - `quad` and `nquad` must be disjoint
+/// - IDs in pairs must be ordered
+/// - all IDs in `quad` and `nquad` must be in `nlin`
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct Degree {
+    lin: HashSet<ID>,
+    nlin: HashSet<ID>,
+    quad: HashSet<(ID, ID)>,
+    nquad: HashSet<(ID, ID)>,
 }
 
 impl Degree {
@@ -96,6 +101,7 @@ impl Degree {
         deg
     }
 
+    /// Cross all elements in degree.
     pub fn cross(&self, other: &Degree) -> Degree {
         if self.is_empty() {
             other.clone()
@@ -151,8 +157,8 @@ impl Degree {
         }
     }
 
+    /// Promote all combinations to highest degree.
     pub fn highest(&self) -> Degree {
-        // Promote all combinations to highest
         let mut deg = Degree::new();
 
         deg.nlin = self.lin.union(&(self.nlin)).cloned().collect();
@@ -222,6 +228,768 @@ enum Oper {
     Variable(Var),
     Parameter(Par),
     Float(f64),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Column {
+    pub val: f64,
+    pub der1: Vec<f64>,
+    pub der2: Vec<f64>,
+}
+
+impl Column {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Workspace used for performing expression AD.
+///
+/// Used to save on allocations with many repeated calls.
+#[derive(Debug, Clone, Default)]
+pub struct WorkSpace {
+    pub cols: Vec<Column>,
+    pub ns: Vec<f64>,
+    pub nds: Vec<f64>,
+    pub na1s: Vec<f64>,
+    pub na2s: Vec<f64>,
+    pub ids: HashMap<ID, f64>,
+}
+
+impl WorkSpace {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Information about a `Expr` for guiding AD process.
+///
+/// Linear and quadratic respective first and second derivatives only need to
+/// be computed once on parameter change.  The `usize` pairs represent indices
+/// into `nlin`.  They are local variable mappings.
+///
+/// The contracts from `Degree` are expected to be held.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ExprInfo {
+    /// Constant first derivative
+    pub lin: Vec<ID>,
+    /// Non-constant first derivative
+    pub nlin: Vec<ID>,
+    /// Constant second derivative
+    pub quad: Vec<(usize, usize)>,
+    /// Non-constant second derivative
+    pub nquad: Vec<(usize, usize)>,
+    pub quad_list: Vec<Vec<ID>>,
+    pub nquad_list: Vec<Vec<ID>>,
+}
+
+/// Maps for each `nlin` entry to IDs that pair with it in `quad`/`nquad`.
+///
+/// When everything is ordered, when traversed it will preserve original
+/// `quad`/`nquad` orderings.
+fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>>{
+    let mut vs = Vec::new();
+    vs.resize(nlin.len(), Vec::new());
+    for &(i, j) in sec {
+        vs[i].push(nlin[j]);
+    }
+    vs
+}
+
+impl ExprInfo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Needs to be called before using some of the AD techniques.
+    pub fn set_lists(&mut self) {
+        self.quad_list = nlin_list(&self.nlin, &self.quad);
+        self.nquad_list = nlin_list(&self.nlin, &self.nquad);
+    }
+}
+
+/// Representation of mathematical expression.
+///
+/// The following conventions are used for function argument names:
+///
+/// - `v1` variable for first derivative
+/// - `v2` variables in second derivative
+/// - `vl2` variables for second derivative (list form)
+/// - `n` the value of a node
+/// - `nd` a first derivative for node
+/// - `na1` the "first" adjoint for node
+/// - `na2` a "second" adjoint for node
+///
+/// These are postfixed with an `s` when a slice/vec of such values are
+/// supplied.
+///
+/// In the mathematical working `n` represents a node, and it has the set of
+/// operands js.
+#[derive(Debug, Clone)]
+pub struct Expr {
+    ops: Vec<Oper>,
+}
+
+impl Expr {
+    /// Value of the expression.
+    pub fn eval(&self, ret: &Retrieve, ns: &mut Vec<f64>) -> f64 {
+        use self::Oper::*;
+        use self::{Var, Par};
+        ns.resize(self.ops.len(), 0.0);
+        // Get values
+        for (i, op) in self.ops.iter().enumerate() {
+            let (left, right) = ns.split_at_mut(i);
+            let cur = &mut right[0]; // the i value from original
+            match *op {
+                Add(j) => {
+                    *cur = left[i - 1] + left[j];
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    *cur = left[j] - left[i - 1];
+                },
+                Mul(j) => {
+                    *cur = left[i - 1]*left[j];
+                },
+                Neg => {
+                    *cur = -left[i - 1];
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    *cur = left[i - 1].powi(pow);
+                },
+                Sin => {
+                    *cur = left[i - 1].sin();
+                },
+                Cos => {
+                    *cur = left[i - 1].cos();
+                },
+                Sum(ref js) => {
+                    *cur = left[i - 1];
+                    for &j in js {
+                        *cur += left[j];
+                    }
+                },
+                Square => {
+                    *cur = left[i - 1]*left[i - 1];
+                },
+                Variable(Var(id)) => {
+                    *cur = ret.get_var(id);
+                },
+                Parameter(Par(id)) => {
+                    *cur = ret.get_par(id);
+                },
+                Float(val) => {
+                    *cur = val;
+                },
+            }
+        }
+        ns[self.ops.len() - 1]
+    }
+
+    /// First derivative using forward method.
+    ///
+    /// `ns` must be the length of the expression.
+    ///
+    /// Could be made faster using loop unrolling if we passed in multiple
+    /// variables to do at the same time.
+    ///
+    /// For a first derivative wrt `x_a`:
+    ///
+    /// ```text
+    /// dn/dx_a = \sum_{j in js} dn/dn_j dn_j/dx_a
+    /// ```
+    ///
+    /// The node derivatives `nds` are calculated from terminals to root. One
+    /// pass is required for each variable:
+    ///
+    /// ```text
+    /// nd = \sum_{j in js} nd_j dn/dn_j
+    /// ```
+    pub fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
+        use self::Oper::*;
+        use self::Var;
+        nds.resize(self.ops.len(), 0.0);
+        for (i, op) in self.ops.iter().enumerate() {
+            let (left, right) = nds.split_at_mut(i);
+            let cur = &mut right[0]; // the i value from original
+            match *op {
+                Add(j) => {
+                    *cur = left[i - 1] + left[j];
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    *cur = left[j] - left[i - 1];
+                },
+                Mul(j) => {
+                    *cur = left[i - 1]*ns[j] + left[j]*ns[i - 1]
+                },
+                Neg => {
+                    *cur = -left[i - 1];
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    *cur = f64::from(pow)*left[i - 1]*ns[i - 1].powi(pow - 1);
+                },
+                Sin => {
+                    *cur = left[i - 1]*ns[i - 1].cos();
+                },
+                Cos => {
+                    *cur = -left[i - 1]*ns[i - 1].sin();
+                },
+                Sum(ref js) => {
+                    *cur = left[i - 1];
+                    for &j in js {
+                        *cur += left[j];
+                    }
+                },
+                Square => {
+                    *cur = 2.0*left[i - 1]*ns[i - 1];
+                },
+                Variable(Var(id)) => {
+                    *cur = if id == v1 { 1.0 } else { 0.0 };
+                },
+                _ => {
+                    *cur = 0.0;
+                },
+            }
+        }
+        nds[self.ops.len() - 1]
+    }
+
+    /// First derivative using reverse method.
+    ///
+    /// `ns` must be the length of the expression.
+    ///
+    /// Assume each operator has only one dependent. If not then would need to
+    /// rework.  Probably not an issue as can maybe just `na1_j +=` (would need
+    /// to make sure they are set to 0 at start).
+    ///
+    /// ```text
+    /// dn/dx_a = \sum_{j in js} dn/dn_j dn_j/dx_a
+    /// ```
+    ///
+    /// The adjoints `na1s` are are calculated from the root to terminals. Once
+    /// a variable terminal is reached, the ajoint value is combined values
+    /// from the variable elsewhere in the expression.
+    ///
+    /// ```text
+    /// na1_j = na1 dn/dn_j
+    /// ```
+    pub fn der1_rev(&self, v1s: &[ID], ns: &[f64], na1s: &mut Vec<f64>,
+                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+        use self::Oper::*;
+        use self::Var;
+
+        // Probably there is a faster way than this.
+        ids.clear();
+        for &id in v1s {
+            ids.insert(id, 0.0);
+        }
+
+        // Go through in reverse
+        na1s.resize(self.ops.len(), 0.0);
+        na1s[self.ops.len() - 1] = 1.0;
+        for (i, op) in self.ops.iter().enumerate().rev() {
+            let (left, right) = na1s.split_at_mut(i);
+            let cur = right[0]; // the i value from original
+            match *op {
+                Add(j) => {
+                    left[i - 1] = cur;
+                    left[j] = cur;
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    left[i - 1] = -cur;
+                    left[j] = cur;
+                },
+                Mul(j) => {
+                    left[i - 1] = ns[j]*cur;
+                    left[j] = ns[i - 1]*cur;
+                },
+                Neg => {
+                    left[i - 1] = -cur;
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    left[i - 1] = f64::from(pow)*ns[i - 1].powi(pow - 1)*cur;
+                },
+                Sin => {
+                    left[i - 1] = ns[i - 1].cos()*cur;
+                },
+                Cos => {
+                    left[i - 1] = -ns[i - 1].sin()*cur;
+                },
+                Sum(ref js) => {
+                    left[i - 1] = cur;
+                    for &j in js {
+                        left[j] = cur;
+                    }
+                },
+                Square => {
+                    left[i - 1] = 2.0*ns[i - 1]*cur;
+                },
+                Variable(Var(id)) => {
+                    if let Some(v) = ids.get_mut(&id) {
+                        *v += cur;
+                    }
+                },
+                _ => {},
+            }
+        }
+        let mut der1 = Vec::new();
+        for id in v1s {
+            der1.push(*ids.get(id).unwrap());
+        }
+        der1
+    }
+
+    /// The second derivatives for given first derivative.
+    ///
+    /// `ns` and `nds` must be the length of the expression.
+    ///
+    /// ```text
+    /// dn/dx_adx_a = \sum_{j \in js} d^2n_j/dx_adx_a
+    ///     + \sum_{j, k \in js} d^2n/dn_jdn_k dn_j/dx_a dn_k/dx_b
+    /// ```
+    /// 
+    /// If we have precomputed the node derivatives wrt `x_b`: `nds`, then when
+    /// we follow one path, we only need to pass on two "adjoint" values to
+    /// each operand.  Given adjoints (na1, na2) for n, then the adjoint of
+    /// operand j is:
+    ///
+    /// ```text
+    /// na1_j = na1 dn/dn_j
+    /// na2_j = na2 dn/dn_j + na1 s_j
+    ///
+    /// where s_j = \sum_{k \in js} d^2n/dn_jdn_k nd_k
+    /// ```
+    ///
+    /// Once a terminal variable is reached, the second adjoint is combined
+    /// with the second adjoint of the variable if it appears anywhere else in
+    /// the expression
+    pub fn der2_rev(&self, dl2: &[ID], ns: &[f64], nds: &[f64],
+                    na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
+                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+        use self::Oper::*;
+        use self::Var;
+
+        // Probably there is a faster way than this.
+        ids.clear();
+        for &id in dl2 {
+            ids.insert(id, 0.0);
+        }
+
+        // Go through in reverse
+        na1s.resize(self.ops.len(), 0.0);
+        na1s[self.ops.len() - 1] = 1.0;
+        na2s.resize(self.ops.len(), 0.0);
+        na2s[self.ops.len() - 1] = 0.0;
+        for (i, op) in self.ops.iter().enumerate().rev() {
+            let (l1, r1) = na1s.split_at_mut(i);
+            let c1 = r1[0];
+            let (l2, r2) = na2s.split_at_mut(i);
+            let c2 = r2[0];
+            match *op {
+                Add(j) => {
+                    l1[i - 1] = c1;
+                    l2[i - 1] = c2;
+                    l1[j] = c1;
+                    l2[j] = c2;
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    l1[i - 1] = -c1;
+                    l2[i - 1] = -c2;
+                    l1[j] = c1;
+                    l2[j] = c2;
+                },
+                Mul(j) => {
+                    l1[i - 1] = c1*ns[j];
+                    l2[i - 1] = c2*ns[j] + c1*nds[j];
+                    l1[j] = c1*ns[i - 1];
+                    l2[j] = c2*ns[i - 1] + c1*nds[i - 1];
+                },
+                Neg => {
+                    l1[i - 1] = -c1;
+                    l2[i - 1] = -c2;
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    let vald = f64::from(pow)*ns[i - 1].powi(pow - 1);
+                    let valdd = f64::from(pow*(pow - 1))
+                                *ns[i - 1].powi(pow - 2);
+                    l1[i - 1] = c1*vald;
+                    l2[i - 1] = c2*vald + c1*valdd*nds[i - 1];
+                },
+                Sin => {
+                    l1[i - 1] = c1*ns[i - 1].cos();
+                    l2[i - 1] = c2*ns[i - 1].cos()
+                                - c1*ns[i - 1].sin()*nds[i - 1];
+                },
+                Cos => {
+                    l1[i - 1] = -c1*ns[i - 1].sin();
+                    l2[i - 1] = -c2*ns[i - 1].sin()
+                                - c1*ns[i - 1].cos()*nds[i - 1];
+                },
+                Sum(ref js) => {
+                    l1[i - 1] = c1;
+                    l2[i - 1] = c2;
+                    for &j in js {
+                        l1[j] = c1;
+                        l2[j] = c2;
+                    }
+                },
+                Square => {
+                    l1[i - 1] = c1*2.0*ns[i - 1];
+                    l2[i - 1] = c2*2.0*ns[i - 1] + c1*2.0*nds[i - 1];
+                },
+                Variable(Var(id)) => {
+                    if let Some(v) = ids.get_mut(&id) {
+                        *v += c2;
+                    }
+                },
+                _ => {},
+            }
+        }
+        let mut der2 = Vec::new();
+        for id in dl2 {
+            der2.push(*ids.get(id).unwrap());
+        }
+        der2
+    }
+
+    /// Value, and derivatives using forward method.
+    pub fn full_fwd<'a>(&self, v1s: &[ID], v2s: &[(usize, usize)],
+                        ret: &Retrieve,
+                        cols: &'a mut Vec<Column>) -> &'a Column {
+        use self::Oper::*;
+        use self::{Var, Par};
+        // Only resize up
+        if cols.len() < self.ops.len() {
+            cols.resize(self.ops.len(), Column::new());
+        }
+        for (i, op) in self.ops.iter().enumerate() {
+            let (left, right) = cols.split_at_mut(i);
+            let cur = &mut right[0]; // the i value from original
+            cur.der1.resize(v1s.len(), 0.0);
+            cur.der2.resize(v2s.len(), 0.0);
+            match *op {
+                Add(j) => {
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = pre.val + oth.val;
+                    for ((c, p), o) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
+                        *c = p + o;
+                    }
+                    for ((c, p), o) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
+                        *c = p + o;
+                    }
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = oth.val - pre.val;
+                    for ((c, p), o) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
+                        *c = o - p;
+                    }
+                    for ((c, p), o) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
+                        *c = o - p;
+                    }
+                },
+                Mul(j) => {
+                    let pre = &left[i - 1];
+                    let oth = &left[j];
+                    cur.val = pre.val*oth.val;
+                    for k in 0..(v1s.len()) {
+                        cur.der1[k] = pre.der1[k]*oth.val
+                                    + pre.val*oth.der1[k];
+                    }
+                    for (((c, p), o), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(oth.der2.iter())
+                            .zip(v2s.iter()) {
+                        *c = p*oth.val + pre.val*o
+                             + pre.der1[k1]*oth.der1[k2]
+                             + pre.der1[k2]*oth.der1[k1];
+                    }
+                },
+                Neg => {
+                    let pre = &left[i - 1];
+                    cur.val = -pre.val;
+                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
+                        *c = -p;
+                    }
+                    for (c, p) in cur.der2.iter_mut().zip(pre.der2.iter()) {
+                        *c = -p;
+                    }
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.powi(pow);
+                    let vald = f64::from(pow)*pre.val.powi(pow - 1);
+                    let valdd = f64::from(pow*(pow - 1))*pre.val.powi(pow - 2);
+                    for (c, p) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()) {
+                        *c = p*vald;
+                    }
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(v2s.iter()) {
+                        *c = p*vald + pre.der1[k1]*pre.der1[k2]*valdd;
+                    }
+                },
+                Sin => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.sin();
+                    let valcos = pre.val.cos();
+                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
+                        *c = p*valcos;
+                    }
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(v2s.iter()) {
+                        *c = p*valcos - pre.der1[k1]*pre.der1[k2]*cur.val;
+                    }
+                },
+                Cos => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val.cos();
+                    let valsin = pre.val.sin();
+                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
+                        *c = -p*valsin;
+                    }
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(v2s.iter()) {
+                        *c = -p*valsin - pre.der1[k1]*pre.der1[k2]*cur.val;
+                    }
+                },
+                Sum(ref js) => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val;
+                    for &j in js {
+                        let oth = &left[j];
+                        cur.val += oth.val;
+                    }
+
+                    for k in 0..(v1s.len()) {
+                        cur.der1[k] = pre.der1[k];
+                        for &j in js {
+                            let oth = &left[j];
+                            cur.der1[k] += oth.der1[k];
+                        }
+                    }
+                    for k in 0..(v2s.len()) {
+                        cur.der2[k] = pre.der2[k];
+                        for &j in js {
+                            let oth = &left[j];
+                            cur.der2[k] += oth.der2[k];
+                        }
+                    }
+                },
+                Square => {
+                    let pre = &left[i - 1];
+                    cur.val = pre.val*pre.val;
+                    for (c, p) in cur.der1.iter_mut()
+                            .zip(pre.der1.iter()) {
+                        *c = 2.0*p*pre.val;
+                    }
+                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
+                            .zip(pre.der2.iter()).zip(v2s.iter()) {
+                        *c = 2.0*p*pre.val + 2.0*pre.der1[k1]*pre.der1[k2];
+                    }
+                },
+                Variable(Var(id)) => {
+                    cur.val = ret.get_var(id);
+                    for (c, did) in cur.der1.iter_mut().zip(v1s.iter()) {
+                        *c = if id == *did { 1.0 } else { 0.0 };
+                    }
+                    for c in &mut cur.der2 {
+                        *c = 0.0;
+                    }
+                },
+                Parameter(Par(id)) => {
+                    cur.val = ret.get_par(id);
+                    for c in &mut cur.der1 {
+                        *c = 0.0;
+                    }
+                    for c in &mut cur.der2 {
+                        *c = 0.0;
+                    }
+                },
+                Float(val) => {
+                    cur.val = val;
+                    for c in &mut cur.der1 {
+                        *c = 0.0;
+                    }
+                    for c in &mut cur.der2 {
+                        *c = 0.0;
+                    }
+                },
+            }
+        }
+        &cols[self.ops.len() - 1]
+    }
+
+    /// Value, and derivatives using both forward and reverse method.
+    ///
+    /// `v1s` and `vl2s` must be same length.
+    pub fn full_fwd_rev(&self, v1s: &[ID], vl2s: &[Vec<ID>],
+                        ret: &Retrieve, ws: &mut WorkSpace) -> Column {
+        let mut col = Column::new();
+
+        col.val = self.eval(ret, &mut ws.ns);
+
+        for (&id, oids) in v1s.iter().zip(vl2s.iter()) {
+            if !oids.is_empty() {
+                col.der1.push(self.der1_fwd(id, &ws.ns, &mut ws.nds));
+                col.der2.append(&mut self.der2_rev(oids, &ws.ns, &ws.nds, 
+                                                   &mut ws.na1s, &mut ws.na2s,
+                                                   &mut ws.ids));
+            }
+        }
+        // Check if all first derivatives were calculated, and if not just use
+        // the reverse method.
+        if col.der1.len() < v1s.len() {
+            col.der1 = self.der1_rev(v1s, &ws.ns, &mut ws.na1s, &mut ws.ids);
+        }
+        
+        col
+    }
+
+    /// Constant derivatives by method auto selection.
+    pub fn auto_const(&self, info: &ExprInfo, store: &Retrieve,
+                     ws: &mut WorkSpace) -> Column {
+        let mut col = Column::new();
+        if !info.lin.is_empty() {
+            self.eval(store, &mut ws.ns);
+            col.der1 = self.der1_rev(&info.lin, &ws.ns, &mut ws.na1s,
+                                     &mut ws.ids);
+        }
+        if !info.quad.is_empty() {
+            col.der2 = self.full_fwd(&info.nlin, &info.quad, store,
+                                     &mut ws.cols).der2.clone();
+            // If using this need to make sure expr has had set_lists() called
+            //col.der2 = self.full_fwd_rev(&info.nlin, &info.quad_list, store,
+            //                             ws).der2;
+        }
+        col
+    }
+
+    /// Dynamic values/derivatives by method auto selection.
+    pub fn auto_dynam(&self, info: &ExprInfo, store: &Retrieve,
+                      ws: &mut WorkSpace) -> Column {
+        if info.nlin.is_empty() {
+            let mut col = Column::new();
+            col.val = self.eval(store, &mut ws.ns);
+            col
+        } else if info.nquad.is_empty() {
+            let mut col = Column::new();
+            col.val = self.eval(store, &mut ws.ns);
+            col.der1 = self.der1_rev(&info.nlin, &ws.ns, &mut ws.na1s,
+                                  &mut ws.ids);
+            col
+        } else {
+            self.full_fwd(&info.nlin, &info.nquad, store, &mut ws.cols).clone()
+            // If using this need to make sure expr has had set_lists() called
+            //self.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
+        }
+    }
+
+    /// Get information about the expression.
+    pub fn get_info(&self) -> ExprInfo {
+        use self::Oper::*;
+        use self::Var;
+        let mut degs: Vec<Degree> = Vec::new();
+        for (i, op) in self.ops.iter().enumerate() {
+            let d = match *op {
+                Add(j) | Sub(j) => {
+                    degs[i - 1].union(&degs[j])
+                },
+                Mul(j) => {
+                    degs[i - 1].cross(&degs[j])
+                },
+                Neg => {
+                    degs[i - 1].clone()
+                },
+                Pow(p) => {
+                    // Even though shouldn't have 0 or 1, might as well match
+                    // anyway
+                    match p {
+                        0 => {
+                            Degree::new()
+                        },
+                        1 => {
+                            degs[i - 1].clone()
+                        },
+                        2 => {
+                            degs[i - 1].cross(&degs[i - 1])
+                        },
+                        _ => {
+                            degs[i - 1].highest()
+                        },
+                    }
+                },
+                Sum(ref js) => {
+                    let mut deg = degs[i - 1].clone();
+                    for &j in js {
+                        deg = deg.union(&degs[j]);
+                    }
+                    deg
+                },
+                Square => {
+                    degs[i - 1].cross(&degs[i - 1])
+                },
+                Sin | Cos => {
+                    degs[i - 1].highest()
+                },
+                Variable(Var(id)) => {
+                    Degree::with_id(id)
+                },
+                _ => {
+                    Degree::new()
+                },
+            };
+            degs.push(d);
+        }
+
+        match degs.pop() {
+            Some(d) => ExprInfo::from(d),
+            None => ExprInfo::new(),
+        }
+    }
+
+    /// Push operation onto expression.
+    fn add_op(&mut self, op: Oper) {
+        self.ops.push(op);
+    }
+
+    // Wouldn't be required if we instead use relative values
+    fn add_offset(&mut self, n: usize) {
+        use self::Oper::*;
+        for op in &mut self.ops {
+            match *op {
+                Add(ref mut j) | Sub(ref mut j) | Mul(ref mut j) => {
+                    *j += n;
+                },
+                Sum(ref mut js) => {
+                    for j in js {
+                        *j += n;
+                    }
+                },
+                _ => (),
+            }
+        }
+    }
+
+    /// Append another expression.
+    fn append(&mut self, mut other: Expr) {
+        other.add_offset(self.ops.len());
+        self.ops.append(&mut other.ops);
+    }
 }
 
 impl From<Var> for Expr {
@@ -330,712 +1098,6 @@ impl NumOps for Par {
 
     fn cos(self) -> Expr {
         Expr::from(self).cos()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Column {
-    pub val: f64,
-    pub der1: Vec<f64>,
-    pub der2: Vec<f64>,
-}
-
-impl Column {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WorkSpace {
-    pub cols: Vec<Column>,
-    pub ns: Vec<f64>,
-    pub nds: Vec<f64>,
-    pub na1s: Vec<f64>,
-    pub na2s: Vec<f64>,
-    pub ids: HashMap<ID, f64>,
-}
-
-impl WorkSpace {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-/// Information about a `Expr` for guiding AD process.
-///
-/// Linear and quadratic respective first and second derivatives only need to
-/// be computed once on parameter change.  The `usize` pairs represent indices
-/// into `nlin`.  They are local variable mappings.
-///
-/// The contracts from `Degree` are expected to be held.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ExprInfo {
-    /// Constant first derivative
-    pub lin: Vec<ID>,
-    /// Non-constant first derivative
-    pub nlin: Vec<ID>,
-    /// Constant second derivative
-    pub quad: Vec<(usize, usize)>,
-    /// Non-constant second derivative
-    pub nquad: Vec<(usize, usize)>,
-    pub quad_list: Vec<Vec<ID>>,
-    pub nquad_list: Vec<Vec<ID>>,
-}
-
-/// Maps for each `nlin` entry to `ID`s that pair with it in `quad`/`nquad`.
-///
-/// When everything is ordered, when traversed it will preserve original
-/// `quad`/`nquad` orderings.
-fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>>{
-    let mut vs = Vec::new();
-    vs.resize(nlin.len(), Vec::new());
-    for &(i, j) in sec {
-        vs[i].push(nlin[j]);
-    }
-    vs
-}
-
-impl ExprInfo {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn set_lists(&mut self) {
-        self.quad_list = nlin_list(&self.nlin, &self.quad);
-        self.nquad_list = nlin_list(&self.nlin, &self.nquad);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Expr {
-    ops: Vec<Oper>,
-}
-
-impl Expr {
-    /// Evaluate just the value.
-    pub fn eval(&self, ret: &Retrieve, ns: &mut Vec<f64>) -> f64 {
-        use self::Oper::*;
-        use self::{Var, Par};
-        ns.resize(self.ops.len(), 0.0);
-        // Get values
-        for (i, op) in self.ops.iter().enumerate() {
-            let (left, right) = ns.split_at_mut(i);
-            let cur = &mut right[0]; // the i value from original
-            match *op {
-                Add(j) => {
-                    *cur = left[i - 1] + left[j];
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    *cur = left[j] - left[i - 1];
-                },
-                Mul(j) => {
-                    *cur = left[i - 1]*left[j];
-                },
-                Neg => {
-                    *cur = -left[i - 1];
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    *cur = left[i - 1].powi(pow);
-                },
-                Sin => {
-                    *cur = left[i - 1].sin();
-                },
-                Cos => {
-                    *cur = left[i - 1].cos();
-                },
-                Sum(ref js) => {
-                    *cur = left[i - 1];
-                    for &j in js {
-                        *cur += left[j];
-                    }
-                },
-                Square => {
-                    *cur = left[i - 1]*left[i - 1];
-                },
-                Variable(Var(id)) => {
-                    *cur = ret.get_var(id);
-                },
-                Parameter(Par(id)) => {
-                    *cur = ret.get_par(id);
-                },
-                Float(val) => {
-                    *cur = val;
-                },
-            }
-        }
-        ns[self.ops.len() - 1]
-    }
-
-    pub fn full_fwd<'a>(&self, d1: &[ID], d2: &[(usize, usize)],
-                        ret: &Retrieve,
-                        cols: &'a mut Vec<Column>) -> &'a Column {
-        use self::Oper::*;
-        use self::{Var, Par};
-        // Only resize up
-        if cols.len() < self.ops.len() {
-            cols.resize(self.ops.len(), Column::new());
-        }
-        for (i, op) in self.ops.iter().enumerate() {
-            let (left, right) = cols.split_at_mut(i);
-            let cur = &mut right[0]; // the i value from original
-            cur.der1.resize(d1.len(), 0.0);
-            cur.der2.resize(d2.len(), 0.0);
-            match *op {
-                Add(j) => {
-                    let pre = &left[i - 1];
-                    let oth = &left[j];
-                    cur.val = pre.val + oth.val;
-                    for ((c, p), o) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
-                        *c = p + o;
-                    }
-                    for ((c, p), o) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
-                        *c = p + o;
-                    }
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    let pre = &left[i - 1];
-                    let oth = &left[j];
-                    cur.val = oth.val - pre.val;
-                    for ((c, p), o) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
-                        *c = o - p;
-                    }
-                    for ((c, p), o) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
-                        *c = o - p;
-                    }
-                },
-                Mul(j) => {
-                    let pre = &left[i - 1];
-                    let oth = &left[j];
-                    cur.val = pre.val*oth.val;
-                    for k in 0..(d1.len()) {
-                        cur.der1[k] = pre.der1[k]*oth.val
-                                    + pre.val*oth.der1[k];
-                    }
-                    for (((c, p), o), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(oth.der2.iter())
-                            .zip(d2.iter()) {
-                        *c = p*oth.val + pre.val*o
-                             + pre.der1[k1]*oth.der1[k2]
-                             + pre.der1[k2]*oth.der1[k1];
-                    }
-                },
-                Neg => {
-                    let pre = &left[i - 1];
-                    cur.val = -pre.val;
-                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
-                        *c = -p;
-                    }
-                    for (c, p) in cur.der2.iter_mut().zip(pre.der2.iter()) {
-                        *c = -p;
-                    }
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    let pre = &left[i - 1];
-                    cur.val = pre.val.powi(pow);
-                    let vald = f64::from(pow)*pre.val.powi(pow - 1);
-                    let valdd = f64::from(pow*(pow - 1))*pre.val.powi(pow - 2);
-                    for (c, p) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()) {
-                        *c = p*vald;
-                    }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(d2.iter()) {
-                        *c = p*vald + pre.der1[k1]*pre.der1[k2]*valdd;
-                    }
-                },
-                Sin => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val.sin();
-                    let valcos = pre.val.cos();
-                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
-                        *c = p*valcos;
-                    }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(d2.iter()) {
-                        *c = p*valcos - pre.der1[k1]*pre.der1[k2]*cur.val;
-                    }
-                },
-                Cos => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val.cos();
-                    let valsin = pre.val.sin();
-                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
-                        *c = -p*valsin;
-                    }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(d2.iter()) {
-                        *c = -p*valsin - pre.der1[k1]*pre.der1[k2]*cur.val;
-                    }
-                },
-                Sum(ref js) => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val;
-                    for &j in js {
-                        let oth = &left[j];
-                        cur.val += oth.val;
-                    }
-
-                    for k in 0..(d1.len()) {
-                        cur.der1[k] = pre.der1[k];
-                        for &j in js {
-                            let oth = &left[j];
-                            cur.der1[k] += oth.der1[k];
-                        }
-                    }
-                    for k in 0..(d2.len()) {
-                        cur.der2[k] = pre.der2[k];
-                        for &j in js {
-                            let oth = &left[j];
-                            cur.der2[k] += oth.der2[k];
-                        }
-                    }
-                },
-                Square => {
-                    let pre = &left[i - 1];
-                    cur.val = pre.val*pre.val;
-                    for (c, p) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()) {
-                        *c = 2.0*p*pre.val;
-                    }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(d2.iter()) {
-                        *c = 2.0*p*pre.val + 2.0*pre.der1[k1]*pre.der1[k2];
-                    }
-                },
-                Variable(Var(id)) => {
-                    cur.val = ret.get_var(id);
-                    for (c, did) in cur.der1.iter_mut().zip(d1.iter()) {
-                        *c = if id == *did { 1.0 } else { 0.0 };
-                    }
-                    for c in &mut cur.der2 {
-                        *c = 0.0;
-                    }
-                },
-                Parameter(Par(id)) => {
-                    cur.val = ret.get_par(id);
-                    for c in &mut cur.der1 {
-                        *c = 0.0;
-                    }
-                    for c in &mut cur.der2 {
-                        *c = 0.0;
-                    }
-                },
-                Float(val) => {
-                    cur.val = val;
-                    for c in &mut cur.der1 {
-                        *c = 0.0;
-                    }
-                    for c in &mut cur.der2 {
-                        *c = 0.0;
-                    }
-                },
-            }
-        }
-        &cols[self.ops.len() - 1]
-    }
-
-    /// First derivative using forward method.
-    ///
-    /// `ns` must be size of `ops`.
-    /// Could be made faster using loop unrolling if we pass in multiple `ID`s
-    /// to solve at the same time.
-    pub fn der1_fwd(&self, vid: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
-        use self::Oper::*;
-        use self::Var;
-        nds.resize(self.ops.len(), 0.0);
-        for (i, op) in self.ops.iter().enumerate() {
-            let (left, right) = nds.split_at_mut(i);
-            let cur = &mut right[0]; // the i value from original
-            match *op {
-                Add(j) => {
-                    *cur = left[i - 1] + left[j];
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    *cur = left[j] - left[i - 1];
-                },
-                Mul(j) => {
-                    *cur = left[i - 1]*ns[j] + left[j]*ns[i - 1]
-                },
-                Neg => {
-                    *cur = -left[i - 1];
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    *cur = f64::from(pow)*left[i - 1]*ns[i - 1].powi(pow - 1);
-                },
-                Sin => {
-                    *cur = left[i - 1]*ns[i - 1].cos();
-                },
-                Cos => {
-                    *cur = -left[i - 1]*ns[i - 1].sin();
-                },
-                Sum(ref js) => {
-                    *cur = left[i - 1];
-                    for &j in js {
-                        *cur += left[j];
-                    }
-                },
-                Square => {
-                    *cur = 2.0*left[i - 1]*ns[i - 1];
-                },
-                Variable(Var(id)) => {
-                    *cur = if id == vid { 1.0 } else { 0.0 };
-                },
-                _ => {
-                    *cur = 0.0;
-                },
-            }
-        }
-        nds[self.ops.len() - 1]
-    }
-
-    /// Calculate first derivative using reverse method.
-    ///
-    /// `ns` must be length of `ops`.
-    /// Assume each operator has only one dependent. If not then would need to
-    /// rework.  Probably not an issue as can maybe just += adjoint (would need
-    /// to make sure they are set to 0 at start).
-    pub fn der1_rev(&self, d1: &[ID], ns: &[f64], nas: &mut Vec<f64>,
-                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
-        use self::Oper::*;
-        use self::Var;
-
-        // Probably there is a faster way than this.
-        ids.clear();
-        for &id in d1 {
-            ids.insert(id, 0.0);
-        }
-
-        // Go through in reverse
-        nas.resize(self.ops.len(), 0.0);
-        nas[self.ops.len() - 1] = 1.0;
-        for (i, op) in self.ops.iter().enumerate().rev() {
-            let (left, right) = nas.split_at_mut(i);
-            let cur = right[0]; // the i value from original
-            match *op {
-                Add(j) => {
-                    left[i - 1] = cur;
-                    left[j] = cur;
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    left[i - 1] = -cur;
-                    left[j] = cur;
-                },
-                Mul(j) => {
-                    left[i - 1] = ns[j]*cur;
-                    left[j] = ns[i - 1]*cur;
-                },
-                Neg => {
-                    left[i - 1] = -cur;
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    left[i - 1] = f64::from(pow)*ns[i - 1].powi(pow - 1)*cur;
-                },
-                Sin => {
-                    left[i - 1] = ns[i - 1].cos()*cur;
-                },
-                Cos => {
-                    left[i - 1] = -ns[i - 1].sin()*cur;
-                },
-                Sum(ref js) => {
-                    left[i - 1] = cur;
-                    for &j in js {
-                        left[j] = cur;
-                    }
-                },
-                Square => {
-                    left[i - 1] = 2.0*ns[i - 1]*cur;
-                },
-                Variable(Var(id)) => {
-                    if let Some(v) = ids.get_mut(&id) {
-                        *v += cur;
-                    }
-                },
-                _ => {},
-            }
-        }
-        let mut der1 = Vec::new();
-        for id in d1 {
-            der1.push(*ids.get(id).unwrap());
-        }
-        der1
-    }
-
-
-    /// Calculate the second derivatives for given first derivative.
-    ///
-    /// Let n represent an operation, and it has the operands js.  Then:
-    /// ```text
-    /// dn/dx_1dx_2 = \sum_{j \in js} d^2n_j/dx_1dx_2
-    ///     + \sum {j, k \in js} d^2n/dn_jdn_k dn_j/dx_1 dn_k/dx_2
-    /// ```
-    /// 
-    /// If we have precomputed the operator derivatives wrt x_1, then when we
-    /// follow one path, we only need to pass on two "adjoint" values to each
-    /// operand.  Given adjoints (a1, a2) for n, then the adjoint of
-    /// operand j is:
-    /// ```text
-    /// a1_j = a1*dn/dn_j
-    /// a2_j = a2*dn/dn_j + a1*s_j
-    ///
-    /// where s_j = \sum_{k \in js} d^2n/dn_jdn_k dn_k/dx_1
-    /// ```
-    pub fn der2_rev(&self, d2: &[ID], ns: &[f64], nds: &[f64],
-                    na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
-                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
-        use self::Oper::*;
-        use self::Var;
-
-        // Probably there is a faster way than this.
-        ids.clear();
-        for &id in d2 {
-            ids.insert(id, 0.0);
-        }
-
-        // Go through in reverse
-        na1s.resize(self.ops.len(), 0.0);
-        na1s[self.ops.len() - 1] = 1.0;
-        na2s.resize(self.ops.len(), 0.0);
-        na2s[self.ops.len() - 1] = 0.0;
-        for (i, op) in self.ops.iter().enumerate().rev() {
-            let (l1, r1) = na1s.split_at_mut(i);
-            let c1 = r1[0];
-            let (l2, r2) = na2s.split_at_mut(i);
-            let c2 = r2[0];
-            match *op {
-                Add(j) => {
-                    l1[i - 1] = c1;
-                    l2[i - 1] = c2;
-                    l1[j] = c1;
-                    l2[j] = c2;
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    l1[i - 1] = -c1;
-                    l2[i - 1] = -c2;
-                    l1[j] = c1;
-                    l2[j] = c2;
-                },
-                Mul(j) => {
-                    l1[i - 1] = c1*ns[j];
-                    l2[i - 1] = c2*ns[j] + c1*nds[j];
-                    l1[j] = c1*ns[i - 1];
-                    l2[j] = c2*ns[i - 1] + c1*nds[i - 1];
-                },
-                Neg => {
-                    l1[i - 1] = -c1;
-                    l2[i - 1] = -c2;
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    let vald = f64::from(pow)*ns[i - 1].powi(pow - 1);
-                    let valdd = f64::from(pow*(pow - 1))
-                                *ns[i - 1].powi(pow - 2);
-                    l1[i - 1] = c1*vald;
-                    l2[i - 1] = c2*vald + c1*valdd*nds[i - 1];
-                },
-                Sin => {
-                    l1[i - 1] = c1*ns[i - 1].cos();
-                    l2[i - 1] = c2*ns[i - 1].cos()
-                                - c1*ns[i - 1].sin()*nds[i - 1];
-                },
-                Cos => {
-                    l1[i - 1] = -c1*ns[i - 1].sin();
-                    l2[i - 1] = -c2*ns[i - 1].sin()
-                                - c1*ns[i - 1].cos()*nds[i - 1];
-                },
-                Sum(ref js) => {
-                    l1[i - 1] = c1;
-                    l2[i - 1] = c2;
-                    for &j in js {
-                        l1[j] = c1;
-                        l2[j] = c2;
-                    }
-                },
-                Square => {
-                    l1[i - 1] = c1*2.0*ns[i - 1];
-                    l2[i - 1] = c2*2.0*ns[i - 1] + c1*2.0*nds[i - 1];
-                },
-                Variable(Var(id)) => {
-                    if let Some(v) = ids.get_mut(&id) {
-                        *v += c2;
-                    }
-                },
-                _ => {},
-            }
-        }
-        let mut der2 = Vec::new();
-        for id in d2 {
-            der2.push(*ids.get(id).unwrap());
-        }
-        der2
-    }
-
-    /// Calculate all using combination of forward and reverse AD.
-    ///
-    /// `d1` and `d2` must be same length.
-    pub fn full_fwd_rev(&self, d1: &[ID], d2: &[Vec<ID>],
-                        ret: &Retrieve, ws: &mut WorkSpace) -> Column {
-        let mut col = Column::new();
-
-        col.val = self.eval(ret, &mut ws.ns);
-
-        for (&id, oids) in d1.iter().zip(d2.iter()) {
-            if !oids.is_empty() {
-                col.der1.push(self.der1_fwd(id, &ws.ns, &mut ws.nds));
-                col.der2.append(&mut self.der2_rev(oids, &ws.ns, &ws.nds, 
-                                                   &mut ws.na1s, &mut ws.na2s,
-                                                   &mut ws.ids));
-            }
-        }
-        // Check if all first derivatives were calculated, and if not just use
-        // the reverse method.
-        if col.der1.len() < d1.len() {
-            col.der1 = self.der1_rev(d1, &ws.ns, &mut ws.na1s, &mut ws.ids);
-        }
-        
-        col
-    }
-
-    /// Calculate constant derivatives by method auto selection.
-    pub fn auto_const(&self, info: &ExprInfo, store: &Retrieve,
-                     ws: &mut WorkSpace) -> Column {
-        let mut col = Column::new();
-        if !info.lin.is_empty() {
-            self.eval(store, &mut ws.ns);
-            col.der1 = self.der1_rev(&info.lin, &ws.ns, &mut ws.na1s,
-                                     &mut ws.ids);
-        }
-        if !info.quad.is_empty() {
-            col.der2 = self.full_fwd(&info.nlin, &info.quad, store,
-                                     &mut ws.cols).der2.clone();
-            // If using this need to make sure expr has had set_lists() called
-            //col.der2 = self.full_fwd_rev(&info.nlin, &info.quad_list, store,
-            //                             ws).der2;
-        }
-        col
-    }
-
-    /// Calculate dynamic derivatives by method auto selection.
-    pub fn auto_dynam(&self, info: &ExprInfo, store: &Retrieve,
-                      ws: &mut WorkSpace) -> Column {
-        if info.nlin.is_empty() {
-            let mut col = Column::new();
-            col.val = self.eval(store, &mut ws.ns);
-            col
-        } else if info.nquad.is_empty() {
-            let mut col = Column::new();
-            col.val = self.eval(store, &mut ws.ns);
-            col.der1 = self.der1_rev(&info.nlin, &ws.ns, &mut ws.na1s,
-                                  &mut ws.ids);
-            col
-        } else {
-            self.full_fwd(&info.nlin, &info.nquad, store, &mut ws.cols).clone()
-            // If using this need to make sure expr has had set_lists() called
-            //self.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
-        }
-    }
-
-    /// Calculate information about the `Expr`.
-    pub fn get_info(&self) -> ExprInfo {
-        use self::Oper::*;
-        use self::Var;
-        let mut degs: Vec<Degree> = Vec::new();
-        for (i, op) in self.ops.iter().enumerate() {
-            let d = match *op {
-                Add(j) | Sub(j) => {
-                    degs[i - 1].union(&degs[j])
-                },
-                Mul(j) => {
-                    degs[i - 1].cross(&degs[j])
-                },
-                Neg => {
-                    degs[i - 1].clone()
-                },
-                Pow(p) => {
-                    // Even though shouldn't have 0 or 1, might as well match
-                    // anyway
-                    match p {
-                        0 => {
-                            Degree::new()
-                        },
-                        1 => {
-                            degs[i - 1].clone()
-                        },
-                        2 => {
-                            degs[i - 1].cross(&degs[i - 1])
-                        },
-                        _ => {
-                            degs[i - 1].highest()
-                        },
-                    }
-                },
-                Sum(ref js) => {
-                    let mut deg = degs[i - 1].clone();
-                    for &j in js {
-                        deg = deg.union(&degs[j]);
-                    }
-                    deg
-                },
-                Square => {
-                    degs[i - 1].cross(&degs[i - 1])
-                },
-                Sin | Cos => {
-                    degs[i - 1].highest()
-                },
-                Variable(Var(id)) => {
-                    Degree::with_id(id)
-                },
-                _ => {
-                    Degree::new()
-                },
-            };
-            degs.push(d);
-        }
-
-        match degs.pop() {
-            Some(d) => ExprInfo::from(d),
-            None => ExprInfo::new(),
-        }
-    }
-
-    fn add_op(&mut self, op: Oper) {
-        self.ops.push(op);
-    }
-
-    // Wouldn't be required if we instead use relative values
-    fn add_offset(&mut self, n: usize) {
-        use self::Oper::*;
-        for op in &mut self.ops {
-            match *op {
-                Add(ref mut j) | Sub(ref mut j) | Mul(ref mut j) => {
-                    *j += n;
-                },
-                Sum(ref mut js) => {
-                    for j in js {
-                        *j += n;
-                    }
-                },
-                _ => (),
-            }
-        }
-    }
-
-    fn append(&mut self, mut other: Expr) {
-        other.add_offset(self.ops.len());
-        self.ops.append(&mut other.ops);
     }
 }
 
@@ -1384,7 +1446,7 @@ mod tests {
         info.set_lists();
         //println!("{:?}", e);
         //println!("{:?}", info);
-        let v = e.eval(&store, &mut ws.ns);
+        e.eval(&store, &mut ws.ns);
         let quad_col = e.full_fwd_rev(&info.nlin, &info.quad_list,
                                       &store, &mut ws);
         let nquad_col = e.full_fwd_rev(&info.nlin, &info.nquad_list,
