@@ -4,9 +4,9 @@ use std::cmp::max;
 
 pub type ID = usize;
 
-// Should not expect an error, panic if out of bounds error.  We could add
-// a verification call that gets done once, or on adding constraints and
-// objective to model check that variables and parameters are valid.
+/// Retrieve current values of variables and parameters.
+///
+/// Expect a panic if requested id not available for whatever reason.
 pub trait Retrieve {
     fn get_var(&self, vid: ID) -> f64;
     fn get_par(&self, pid: ID) -> f64;
@@ -199,16 +199,25 @@ impl From<Deg> for FilmInfo {
     }
 }
 
-// Version where implicitly use the value to the left
-// Must start with terminal value for this to be valid
-// Index must be less than index of entry in tape
+/// Operations for representing expressions.
+///
+/// These operations are designed to be stored and structured on a `Film`.
+/// They either have zero or more operands. For operations with 1 or more
+/// operands, the first operand is implicitly the operation immediately to the
+/// left on the `Film`. For additional operands their indices into the `Film`
+/// are given explicitly.
+///
+/// In the future this could be changed to relative operand referencing, i.e.
+/// distance to the left.
 #[derive(Debug, Clone)]
 enum Oper {
     Add(usize),
     Sub(usize),
     Mul(usize),
-    Neg, // negate
-    Pow(i32), // to be safe, should not be 0 or 1, 2 should use Square
+    /// Negate
+    Neg,
+    /// Caution should be employed if required to use for power of 0 or 1
+    Pow(i32),
     Sin,
     Cos,
     Sum(Vec<usize>),
@@ -345,7 +354,8 @@ pub struct WorkSpace {
     pub cols: Vec<Column>,
     pub ns: Vec<f64>,
     pub nds: Vec<f64>,
-    pub nas: Vec<f64>,
+    pub na1s: Vec<f64>,
+    pub na2s: Vec<f64>,
     pub ids: HashMap<ID, f64>,
 }
 
@@ -536,17 +546,15 @@ impl Film {
                     // Assume it is not 0 or 1
                     let pre = &left[i - 1];
                     cur.val = pre.val.powi(pow);
-                    let vald = pre.val.powi(pow - 1);
-                    let valdd = pre.val.powi(pow - 2);
+                    let vald = f64::from(pow)*pre.val.powi(pow - 1);
+                    let valdd = f64::from(pow*(pow - 1))*pre.val.powi(pow - 2);
                     for (c, p) in cur.der1.iter_mut()
                             .zip(pre.der1.iter()) {
-                        *c = f64::from(pow)*p*vald;
+                        *c = p*vald;
                     }
                     for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
                             .zip(pre.der2.iter()).zip(d2.iter()) {
-                        *c = f64::from(pow)*p*vald
-                                + f64::from(pow*(pow - 1))
-                                *pre.der1[k1]*pre.der1[k2]*valdd;
+                        *c = p*vald + pre.der1[k1]*pre.der1[k2]*valdd;
                     }
                 },
                 Sin => {
@@ -714,7 +722,7 @@ impl Film {
         nas[self.ops.len() - 1] = 1.0;
         for (i, op) in self.ops.iter().enumerate().rev() {
             let (left, right) = nas.split_at_mut(i);
-            let &cur = &right[0]; // the i value from original
+            let cur = right[0]; // the i value from original
             match *op {
                 Add(j) => {
                     left[i - 1] = cur;
@@ -766,8 +774,120 @@ impl Film {
         der1
     }
 
-    // d1 and d2 must be same length.
-    // Don't think this works, was being hopeful
+
+    /// Calculate the second derivatives for given first derivative.
+    ///
+    /// Let n represent an operation, and it has the operands js.  Then:
+    /// ```text
+    /// dn/dx_1dx_2 = \sum_{j \in js} d^2n_j/dx_1dx_2
+    ///     + \sum {j, k \in js} d^2n/dn_jdn_k dn_j/dx_1 dn_k/dx_2
+    /// ```
+    /// 
+    /// If we have precomputed the operator derivatives wrt x_1, then when we
+    /// follow one path, we only need to pass on two "adjoint" values to each
+    /// operand.  Given adjoints (a1, a2) for n, then the adjoint of
+    /// operand j is:
+    /// ```text
+    /// a1_j = a1*dn/dn_j
+    /// a2_j = a2*dn/dn_j + a1*s_j
+    ///
+    /// where s_j = \sum_{k \in js} d^2n/dn_jdn_k dn_k/dx_1
+    /// ```
+    pub fn der2_rev(&self, d2: &Vec<ID>, ret: &Retrieve,
+                    ns: &Vec<f64>, nds: &Vec<f64>,
+                    na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
+                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+        use self::Oper::*;
+        use self::{Var, Par};
+
+        // Probably there is a faster way than this.
+        ids.clear();
+        for &id in d2 {
+            ids.insert(id, 0.0);
+        }
+
+        // Go through in reverse
+        na1s.resize(self.ops.len(), 0.0);
+        na1s[self.ops.len() - 1] = 1.0;
+        na2s.resize(self.ops.len(), 0.0);
+        na2s[self.ops.len() - 1] = 0.0;
+        for (i, op) in self.ops.iter().enumerate().rev() {
+            let (l1, r1) = na1s.split_at_mut(i);
+            let c1 = r1[0];
+            let (l2, r2) = na2s.split_at_mut(i);
+            let c2 = r2[0];
+            match *op {
+                Add(j) => {
+                    l1[i - 1] = c1;
+                    l2[i - 1] = c2;
+                    l1[j] = c1;
+                    l2[j] = c2;
+                },
+                Sub(j) => {
+                    // Take note of order where oth - pre 
+                    l1[i - 1] = -c1;
+                    l2[i - 1] = -c2;
+                    l1[j] = c1;
+                    l2[j] = c2;
+                },
+                Mul(j) => {
+                    l1[i - 1] = c1*ns[j];
+                    l2[i - 1] = c2*ns[j] + c1*nds[j];
+                    l1[j] = c1*ns[i - 1];
+                    l2[j] = c2*ns[i - 1] + c1*nds[i - 1];
+                },
+                Neg => {
+                    l1[i - 1] = -c1;
+                    l2[i - 1] = -c2;
+                },
+                Pow(pow) => {
+                    // Assume it is not 0 or 1
+                    let vald = f64::from(pow)*ns[i - 1].powi(pow - 1);
+                    let valdd = f64::from(pow*(pow - 1))
+                                *ns[i - 1].powi(pow - 2);
+                    l1[i - 1] = c1*vald;
+                    l2[i - 1] = c2*vald + c1*valdd*nds[i - 1];
+                },
+                Sin => {
+                    l1[i - 1] = c1*ns[i - 1].cos();
+                    l2[i - 1] = c2*ns[i - 1].cos()
+                                - c1*ns[i - 1].sin()*nds[i - 1];
+                },
+                Cos => {
+                    l1[i - 1] = -c1*ns[i - 1].sin();
+                    l2[i - 1] = -c2*ns[i - 1].sin()
+                                - c1*ns[i - 1].cos()*nds[i - 1];
+                },
+                Sum(ref js) => {
+                    l1[i - 1] = c1;
+                    l2[i - 1] = c2;
+                    for &j in js {
+                        l1[j] = c1;
+                        l2[j] = c2;
+                    }
+                },
+                Square => {
+                    l1[i - 1] = c1*2.0*ns[i - 1];
+                    l2[i - 1] = c2*2.0*ns[i - 1] + c1*2.0*nds[i - 1];
+                },
+                Variable(Var(id)) => {
+                    if let Some(v) = ids.get_mut(&id) {
+                        *v += c2;
+                    }
+                },
+                _ => {},
+            }
+        }
+        let mut der2 = Vec::new();
+        for id in d2 {
+            der2.push(*ids.get(id).unwrap());
+        }
+        der2
+    }
+
+    /// Calculte full `Column` using forward and reverse AD.
+    ///
+    /// `d1` and `d2` must be same length.
     pub fn full_fwd_rev(&self, d1: &Vec<ID>, d2: &Vec<Vec<ID>>,
                         ret: &Retrieve, ws: &mut WorkSpace) -> Column {
         use self::Oper::*;
@@ -780,8 +900,9 @@ impl Film {
         for (&id, oids) in d1.iter().zip(d2.iter()) {
             col.der1.push(self.der1_fwd(id, ret, &ws.ns, &mut ws.nds));
             if !oids.is_empty() {
-                col.der2.append(&mut self.der1_rev(oids, ret, &ws.nds,
-                                                   &mut ws.nas, &mut ws.ids));
+                col.der2.append(&mut self.der2_rev(oids, ret, &ws.ns, &ws.nds, 
+                                                   &mut ws.na1s, &mut ws.na2s,
+                                                   &mut ws.ids));
             }
         }
         
@@ -2541,7 +2662,7 @@ mod tests {
         //println!("{:?}", f);
         //println!("{:?}", finfo);
         let v = f.eval(&store, &mut ws.ns);
-        let der1 = f.der1_rev(&vec![0, 1], &store, &ws.ns, &mut ws.nas,
+        let der1 = f.der1_rev(&vec![0, 1], &store, &ws.ns, &mut ws.na1s,
                              &mut ws.ids);
 
         assert_eq!(v, 20.0 + 5.0_f64.sin());
@@ -2565,7 +2686,7 @@ mod tests {
         //println!("{:?}", f);
         //println!("{:?}", finfo);
         let v = f.eval(&store, &mut ws.ns);
-        let der1 = f.der1_rev(&vec![0, 1], &store, &ws.ns, &mut ws.nas,
+        let der1 = f.der1_rev(&vec![0, 1], &store, &ws.ns, &mut ws.na1s,
                              &mut ws.ids);
         let quad_col = f.full_fwd_rev(&finfo.nlin, &finfo.quad_list(),
                                       &store, &mut ws);
@@ -2577,7 +2698,7 @@ mod tests {
         assert_eq!(quad_col.der1[0], 5.0_f64.cos() + 4.0);
         assert_eq!(quad_col.der1[1], 5.0);
         assert_eq!(quad_col.der2.len(), 1); // quad
-        assert_eq!(quad_col.der2[0], 2.0);
+        assert_eq!(quad_col.der2[0], 1.0);
         assert_eq!(nquad_col.val, 20.0 + 5.0_f64.sin());
         assert_eq!(nquad_col.der1.len(), 2);
         assert_eq!(nquad_col.der1[0], 5.0_f64.cos() + 4.0);
