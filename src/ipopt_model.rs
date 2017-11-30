@@ -75,10 +75,16 @@ fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
     let mut col = Column::new();
     //col.der1 = film.full_fwd(&info.lin, &Vec::new(), store, ws).der1.clone();
     film.eval(store, &mut ws.ns);
-    col.der1 = film.der1_rev(&info.lin, store, &ws.ns, &mut ws.na1s,
-                             &mut ws.ids);
-    col.der2 = film.full_fwd(&info.nlin, &info.quad, store,
-                             &mut ws.cols).der2.clone();
+    if !info.lin.is_empty() {
+        col.der1 = film.der1_rev(&info.lin, store, &ws.ns, &mut ws.na1s,
+                                 &mut ws.ids);
+    }
+    if !info.quad.is_empty() {
+        col.der2 = film.full_fwd(&info.nlin, &info.quad, store,
+                                 &mut ws.cols).der2.clone();
+    }
+    //col.der2 = film.full_fwd_rev(&info.nlin, &info.quad_list, store,
+    //                             ws).der2;
     col
 }
 
@@ -93,6 +99,7 @@ fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
     } else {
         *col = film.full_fwd(&info.nlin, &info.nquad, store,
                              &mut ws.cols).clone();
+        //*col = film.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
     }
 }
 
