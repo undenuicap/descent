@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn test_it() {
+    fn manual_impl() {
         let x_lb = vec![0.2];
         let x_ub = vec![1.0];
         let g_lb = vec![];

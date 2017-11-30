@@ -202,28 +202,31 @@ impl From<Degree> for ExprInfo {
     }
 }
 
+/// Reference to operand within `Expr`.
+///
+/// This references an operand of a operation within an `Expr`.  The operand
+/// location `ORef` hops to the left.
+type ORef = usize;
+
 /// Operations for representing expressions.
 ///
 /// These operations are designed to be stored and structured on a `Expr`.
 /// They either have zero or more operands. For operations with 1 or more
 /// operands, the first operand is implicitly the operation immediately to the
-/// left on the `Expr`. For additional operands their indices into the `Expr`
-/// are given explicitly.
-///
-/// In the future this could be changed to relative operand referencing, i.e.
-/// distance to the left.
+/// left on the `Expr`. For additional operands a relative position is given
+/// using the `ORef` convention.
 #[derive(Debug, Clone)]
 enum Oper {
-    Add(usize),
-    Sub(usize),
-    Mul(usize),
+    Add(ORef),
+    Sub(ORef),
+    Mul(ORef),
     /// Negate
     Neg,
     /// Caution should be employed if required to use for power of 0 or 1
     Pow(i32),
     Sin,
     Cos,
-    Sum(Vec<usize>),
+    Sum(Vec<ORef>),
     Square,
     Variable(Var),
     Parameter(Par),
@@ -327,7 +330,7 @@ impl ExprInfo {
 /// operands js.
 ///
 // In general an expression needs to be constructed so that the operation
-// references point to a valid location.  We should limit the interface so that
+// references point to a valid location. We should limit the interface so that
 // it becomes difficult/impossible for someone outside this mod to create an
 // invalid expression.
 #[derive(Debug, Clone)]
@@ -340,15 +343,15 @@ impl Expr {
     pub fn eval(&self, ret: &Retrieve, ns: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
         use self::{Var, Par};
-        ns.resize(self.ops.len(), 0.0);
+        ns.resize(self.len(), 0.0);
         // Get values
         for (i, op) in self.ops.iter().enumerate() {
             let (left, right) = ns.split_at_mut(i);
             let cur = &mut right[0]; // the i value from original
             match *op {
-                Add(j) => *cur = left[i - 1] + left[j],
-                Sub(j) => *cur = left[j] - left[i - 1],
-                Mul(j) => *cur = left[i - 1]*left[j],
+                Add(j) => *cur = left[i - 1] + left[i - j],
+                Sub(j) => *cur = left[i - j] - left[i - 1],
+                Mul(j) => *cur = left[i - 1]*left[i - j],
                 Neg => *cur = -left[i - 1],
                 Pow(pow) => *cur = left[i - 1].powi(pow),
                 Sin => *cur = left[i - 1].sin(),
@@ -356,7 +359,7 @@ impl Expr {
                 Sum(ref js) => {
                     *cur = left[i - 1];
                     for &j in js {
-                        *cur += left[j];
+                        *cur += left[i - j];
                     }
                 }
                 Square => *cur = left[i - 1]*left[i - 1],
@@ -365,7 +368,7 @@ impl Expr {
                 Float(val) => *cur = val,
             }
         }
-        ns[self.ops.len() - 1]
+        ns[self.len() - 1]
     }
 
     /// First derivative using forward method.
@@ -390,14 +393,14 @@ impl Expr {
     fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
         use self::Var;
-        nds.resize(self.ops.len(), 0.0);
+        nds.resize(self.len(), 0.0);
         for (i, op) in self.ops.iter().enumerate() {
             let (left, right) = nds.split_at_mut(i);
             let cur = &mut right[0]; // the i value from original
             match *op {
-                Add(j) => *cur = left[i - 1] + left[j],
-                Sub(j) => *cur = left[j] - left[i - 1],
-                Mul(j) => *cur = left[i - 1]*ns[j] + left[j]*ns[i - 1],
+                Add(j) => *cur = left[i - 1] + left[i - j],
+                Sub(j) => *cur = left[i - j] - left[i - 1],
+                Mul(j) => *cur = left[i - 1]*ns[i - j] + left[i - j]*ns[i - 1],
                 Neg => *cur = -left[i - 1],
                 Pow(pow) => *cur = f64::from(pow)*left[i - 1]
                     *ns[i - 1].powi(pow - 1),
@@ -406,7 +409,7 @@ impl Expr {
                 Sum(ref js) => {
                     *cur = left[i - 1];
                     for &j in js {
-                        *cur += left[j];
+                        *cur += left[i - j];
                     }
                 }
                 Square => *cur = 2.0*left[i - 1]*ns[i - 1],
@@ -414,7 +417,7 @@ impl Expr {
                 _ => *cur = 0.0,
             }
         }
-        nds[self.ops.len() - 1]
+        nds[self.len() - 1]
     }
 
     /// First derivative using reverse method.
@@ -448,24 +451,24 @@ impl Expr {
         }
 
         // Go through in reverse
-        na1s.resize(self.ops.len(), 0.0);
-        na1s[self.ops.len() - 1] = 1.0;
+        na1s.resize(self.len(), 0.0);
+        na1s[self.len() - 1] = 1.0;
         for (i, op) in self.ops.iter().enumerate().rev() {
             let (left, right) = na1s.split_at_mut(i);
             let cur = right[0]; // the i value from original
             match *op {
                 Add(j) => {
                     left[i - 1] = cur;
-                    left[j] = cur;
+                    left[i - j] = cur;
                 }
                 Sub(j) => {
                     // Take note of order where oth - pre 
                     left[i - 1] = -cur;
-                    left[j] = cur;
+                    left[i - j] = cur;
                 }
                 Mul(j) => {
-                    left[i - 1] = ns[j]*cur;
-                    left[j] = ns[i - 1]*cur;
+                    left[i - 1] = ns[i - j]*cur;
+                    left[i - j] = ns[i - 1]*cur;
                 }
                 Neg => {
                     left[i - 1] = -cur;
@@ -483,7 +486,7 @@ impl Expr {
                 Sum(ref js) => {
                     left[i - 1] = cur;
                     for &j in js {
-                        left[j] = cur;
+                        left[i - j] = cur;
                     }
                 }
                 Square => {
@@ -541,10 +544,10 @@ impl Expr {
         }
 
         // Go through in reverse
-        na1s.resize(self.ops.len(), 0.0);
-        na1s[self.ops.len() - 1] = 1.0;
-        na2s.resize(self.ops.len(), 0.0);
-        na2s[self.ops.len() - 1] = 0.0;
+        na1s.resize(self.len(), 0.0);
+        na1s[self.len() - 1] = 1.0;
+        na2s.resize(self.len(), 0.0);
+        na2s[self.len() - 1] = 0.0;
         for (i, op) in self.ops.iter().enumerate().rev() {
             let (l1, r1) = na1s.split_at_mut(i);
             let c1 = r1[0];
@@ -554,21 +557,21 @@ impl Expr {
                 Add(j) => {
                     l1[i - 1] = c1;
                     l2[i - 1] = c2;
-                    l1[j] = c1;
-                    l2[j] = c2;
+                    l1[i - j] = c1;
+                    l2[i - j] = c2;
                 }
                 Sub(j) => {
                     // Take note of order where oth - pre 
                     l1[i - 1] = -c1;
                     l2[i - 1] = -c2;
-                    l1[j] = c1;
-                    l2[j] = c2;
+                    l1[i - j] = c1;
+                    l2[i - j] = c2;
                 }
                 Mul(j) => {
-                    l1[i - 1] = c1*ns[j];
-                    l2[i - 1] = c2*ns[j] + c1*nds[j];
-                    l1[j] = c1*ns[i - 1];
-                    l2[j] = c2*ns[i - 1] + c1*nds[i - 1];
+                    l1[i - 1] = c1*ns[i - j];
+                    l2[i - 1] = c2*ns[i - j] + c1*nds[i - j];
+                    l1[i - j] = c1*ns[i - 1];
+                    l2[i - j] = c2*ns[i - 1] + c1*nds[i - 1];
                 }
                 Neg => {
                     l1[i - 1] = -c1;
@@ -596,8 +599,8 @@ impl Expr {
                     l1[i - 1] = c1;
                     l2[i - 1] = c2;
                     for &j in js {
-                        l1[j] = c1;
-                        l2[j] = c2;
+                        l1[i - j] = c1;
+                        l2[i - j] = c2;
                     }
                 }
                 Square => {
@@ -626,8 +629,8 @@ impl Expr {
         use self::Oper::*;
         use self::{Var, Par};
         // Only resize up
-        if cols.len() < self.ops.len() {
-            cols.resize(self.ops.len(), Column::new());
+        if cols.len() < self.len() {
+            cols.resize(self.len(), Column::new());
         }
         for (i, op) in self.ops.iter().enumerate() {
             let (left, right) = cols.split_at_mut(i);
@@ -637,7 +640,7 @@ impl Expr {
             match *op {
                 Add(j) => {
                     let pre = &left[i - 1];
-                    let oth = &left[j];
+                    let oth = &left[i - j];
                     cur.val = pre.val + oth.val;
                     for ((c, p), o) in cur.der1.iter_mut()
                             .zip(pre.der1.iter()).zip(oth.der1.iter()) {
@@ -651,7 +654,7 @@ impl Expr {
                 Sub(j) => {
                     // Take note of order where oth - pre 
                     let pre = &left[i - 1];
-                    let oth = &left[j];
+                    let oth = &left[i - j];
                     cur.val = oth.val - pre.val;
                     for ((c, p), o) in cur.der1.iter_mut()
                             .zip(pre.der1.iter()).zip(oth.der1.iter()) {
@@ -664,7 +667,7 @@ impl Expr {
                 }
                 Mul(j) => {
                     let pre = &left[i - 1];
-                    let oth = &left[j];
+                    let oth = &left[i - j];
                     cur.val = pre.val*oth.val;
                     for k in 0..(v1s.len()) {
                         cur.der1[k] = pre.der1[k]*oth.val
@@ -731,21 +734,21 @@ impl Expr {
                     let pre = &left[i - 1];
                     cur.val = pre.val;
                     for &j in js {
-                        let oth = &left[j];
+                        let oth = &left[i - j];
                         cur.val += oth.val;
                     }
 
                     for k in 0..(v1s.len()) {
                         cur.der1[k] = pre.der1[k];
                         for &j in js {
-                            let oth = &left[j];
+                            let oth = &left[i - j];
                             cur.der1[k] += oth.der1[k];
                         }
                     }
                     for k in 0..(v2s.len()) {
                         cur.der2[k] = pre.der2[k];
                         for &j in js {
-                            let oth = &left[j];
+                            let oth = &left[i - j];
                             cur.der2[k] += oth.der2[k];
                         }
                     }
@@ -791,7 +794,7 @@ impl Expr {
                 }
             }
         }
-        &cols[self.ops.len() - 1]
+        &cols[self.len() - 1]
     }
 
     /// Value, and derivatives using both forward and reverse method.
@@ -882,8 +885,8 @@ impl Expr {
         let mut degs: Vec<Degree> = Vec::new();
         for (i, op) in self.ops.iter().enumerate() {
             let d = match *op {
-                Add(j) | Sub(j) => degs[i - 1].union(&degs[j]),
-                Mul(j) => degs[i - 1].cross(&degs[j]),
+                Add(j) | Sub(j) => degs[i - 1].union(&degs[i - j]),
+                Mul(j) => degs[i - 1].cross(&degs[i - j]),
                 Neg => degs[i - 1].clone(),
                 Pow(p) => {
                     // Even though shouldn't have 0 or 1, might as well match
@@ -898,7 +901,7 @@ impl Expr {
                 Sum(ref js) => {
                     let mut deg = degs[i - 1].clone();
                     for &j in js {
-                        deg = deg.union(&degs[j]);
+                        deg = deg.union(&degs[i - j]);
                     }
                     deg
                 }
@@ -916,30 +919,17 @@ impl Expr {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.ops.len()
+    }
+
     /// Push operation onto expression.
     fn add_op(&mut self, op: Oper) {
         self.ops.push(op);
     }
 
-    // Wouldn't be required if we instead use relative values
-    fn add_offset(&mut self, n: usize) {
-        use self::Oper::*;
-        for op in &mut self.ops {
-            match *op {
-                Add(ref mut j) | Sub(ref mut j) | Mul(ref mut j) => *j += n,
-                Sum(ref mut js) => {
-                    for j in js {
-                        *j += n;
-                    }
-                }
-                _ => (),
-            }
-        }
-    }
-
     /// Append another expression.
     fn append(&mut self, mut other: Expr) {
-        other.add_offset(self.ops.len());
         self.ops.append(&mut other.ops);
     }
 }
@@ -1140,27 +1130,30 @@ impl std::ops::Add<Expr> for Expr {
         } else if other.ops.is_empty() {
             self
         } else {
-            let n = self.ops.len();
+            let j = other.len() + 1;
             self.append(other);
-            self.add_op(Oper::Add(n - 1));
+            self.add_op(Oper::Add(j));
             //match self.ops.pop().unwrap() {
             //    Oper::Add(j) => {
-            //        let n = self.ops.len();
-            //        let js = vec![j, n - 1];
+            //        let n = other.len();
             //        self.append(other);
-            //        self.add_op(Oper::Sum(js));
+            //        self.add_op(Oper::Sum(vec![j + n, n + 1]));
             //    }
             //    Oper::Sum(mut js) => {
-            //        let n = self.ops.len();
-            //        js.push(n - 1);
+            //        // Not ideal as slows down
+            //        let n = other.len();
+            //        for j in &mut js {
+            //            *j += n;
+            //        }
+            //        js.push(n + 1);
             //        self.append(other);
             //        self.add_op(Oper::Sum(js));
             //    }
             //    op => {
-            //        let n = self.ops.len();
+            //        let j = other.len() + 1;
             //        self.ops.push(op); // push back on
             //        self.append(other);
-            //        self.add_op(Oper::Add(n));
+            //        self.add_op(Oper::Add(j));
             //    }
             //}
             self
@@ -1179,9 +1172,9 @@ impl std::ops::Sub<Expr> for Expr {
         } else if other.ops.is_empty() {
             self
         } else {
-            let n = self.ops.len();
+            let j = other.len() + 1;
             self.append(other);
-            self.add_op(Oper::Sub(n - 1));
+            self.add_op(Oper::Sub(j));
             self
         }
     }
@@ -1197,9 +1190,9 @@ impl std::ops::Mul<Expr> for Expr {
         } else if other.ops.is_empty() {
             self
         } else {
-            let n = self.ops.len();
+            let j = other.len() + 1;
             self.append(other);
-            self.add_op(Oper::Mul(n - 1));
+            self.add_op(Oper::Mul(j));
             self
         }
     }
@@ -1220,12 +1213,12 @@ mod tests {
         e = 5.0 + e;
         e = Var(0) + e;
         e = e*Par(0);
+        //println!("{:?}", e);
 
         let info = e.get_info();
+        //println!("{:?}", info);
 
         let mut ws = WorkSpace::new();
-        //println!("{:?}", info);
-        //println!("{:?}", e);
         let col = e.full_fwd(&info.lin, &Vec::new(), &store, &mut ws.cols);
 
         assert_eq!(col.val, 60.0);
