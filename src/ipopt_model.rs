@@ -70,39 +70,6 @@ pub struct IpoptModel {
     prepared: bool, // problem prepared
 }
 
-fn const_col(film: &Film, info: &FilmInfo, store: &Retrieve,
-             ws: &mut WorkSpace) -> Column {
-    let mut col = Column::new();
-    //col.der1 = film.full_fwd(&info.lin, &Vec::new(), store, ws).der1.clone();
-    film.eval(store, &mut ws.ns);
-    if !info.lin.is_empty() {
-        col.der1 = film.der1_rev(&info.lin, store, &ws.ns, &mut ws.na1s,
-                                 &mut ws.ids);
-    }
-    if !info.quad.is_empty() {
-        col.der2 = film.full_fwd(&info.nlin, &info.quad, store,
-                                 &mut ws.cols).der2.clone();
-    }
-    //col.der2 = film.full_fwd_rev(&info.nlin, &info.quad_list, store,
-    //                             ws).der2;
-    col
-}
-
-fn dynam_col(film: &Film, info: &FilmInfo, store: &Retrieve,
-             ws: &mut WorkSpace, col: &mut Column) {
-    if info.nlin.is_empty() {
-        col.val = film.eval(store, &mut ws.ns);
-    } else if info.nquad.is_empty() {
-        col.val = film.eval(store, &mut ws.ns);
-        col.der1 = film.der1_rev(&info.nlin, store, &ws.ns, &mut ws.na1s,
-                              &mut ws.ids);
-    } else {
-        *col = film.full_fwd(&info.nlin, &info.nquad, store,
-                             &mut ws.cols).clone();
-        //*col = film.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
-    }
-}
-
 impl IpoptModel {
     pub fn new() -> IpoptModel {
         IpoptModel {
@@ -275,13 +242,14 @@ impl IpoptModel {
                 // should not affect the values).
                 cache.cons_const.clear();
                 for c in &self.model.cons {
-                    cache.cons_const.push(const_col(&c.film, &c.info,
-                                                   &sol.store, &mut cache.ws));
+                    cache.cons_const.push(c.film.auto_const(&c.info,
+                                                            &sol.store,
+                                                            &mut cache.ws));
                 }
 
-                cache.obj_const = const_col(&self.model.obj.film,
-                                            &self.model.obj.info,
-                                            &sol.store, &mut cache.ws);
+                let obj = &self.model.obj;
+                cache.obj_const = obj.film.auto_const(&obj.info, &sol.store,
+                                                      &mut cache.ws);
 
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
@@ -441,20 +409,15 @@ impl<'a> Retrieve for Store<'a> {
 }
 
 fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
-    dynam_col(&cb_data.model.obj.film,
-              &cb_data.model.obj.info,
-              store,
-              &mut cb_data.cache.ws,
-              &mut cb_data.cache.obj);
+    let obj = &cb_data.model.obj;
+    cb_data.cache.obj = obj.film.auto_dynam(&obj.info, store,
+                                            &mut cb_data.cache.ws);
 }
 
 fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
     for (i, c) in cb_data.model.cons.iter().enumerate() {
-        dynam_col(&c.film,
-                  &c.info,
-                  store,
-                  &mut cb_data.cache.ws,
-                  &mut cb_data.cache.cons[i]);
+        cb_data.cache.cons[i] = c.film.auto_dynam(&c.info, store,
+                                                  &mut cb_data.cache.ws);
     }
 }
 

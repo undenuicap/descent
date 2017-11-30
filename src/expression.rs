@@ -931,10 +931,40 @@ impl Film {
         col
     }
 
-    //pub fn full_auto_quad(&self, ret: &Retrieve, ws: &mut WorkSpace) ->
-    //                      Column {
-    //    // Work
-    //}
+    pub fn auto_const(&self, info: &FilmInfo, store: &Retrieve,
+                     ws: &mut WorkSpace) -> Column {
+        let mut col = Column::new();
+        if !info.lin.is_empty() {
+            self.eval(store, &mut ws.ns);
+            col.der1 = self.der1_rev(&info.lin, store, &ws.ns, &mut ws.na1s,
+                                     &mut ws.ids);
+        }
+        if !info.quad.is_empty() {
+            col.der2 = self.full_fwd(&info.nlin, &info.quad, store,
+                                     &mut ws.cols).der2.clone();
+            //col.der2 = self.full_fwd_rev(&info.nlin, &info.quad_list, store,
+            //                             ws).der2;
+        }
+        col
+    }
+
+    pub fn auto_dynam(&self, info: &FilmInfo, store: &Retrieve,
+                      ws: &mut WorkSpace) -> Column {
+        if info.nlin.is_empty() {
+            let mut col = Column::new();
+            col.val = self.eval(store, &mut ws.ns);
+            col
+        } else if info.nquad.is_empty() {
+            let mut col = Column::new();
+            col.val = self.eval(store, &mut ws.ns);
+            col.der1 = self.der1_rev(&info.nlin, store, &ws.ns, &mut ws.na1s,
+                                  &mut ws.ids);
+            col
+        } else {
+            self.full_fwd(&info.nlin, &info.nquad, store, &mut ws.cols).clone()
+            //self.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
+        }
+    }
 
     pub fn get_info(&self) -> FilmInfo {
         use self::Oper::*;
