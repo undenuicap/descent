@@ -1,6 +1,6 @@
 extern crate descent;
 
-use descent::expression::{Film, NumOpsF};
+use descent::expr::{Expr, NumOps};
 use descent::ipopt_model::{IpoptModel};
 use descent::model::{Model};
 
@@ -24,7 +24,7 @@ fn main() {
     for _i in 0..n {
         xs.push(m.add_var(-1.5, 0.0, -0.5));
     }
-    let mut obj = Film::from(0.0);
+    let mut obj = Expr::from(0.0);
     for &x in &xs {
         obj = obj + (x - 1.0).powi(2);
     }
@@ -32,7 +32,8 @@ fn main() {
     m.set_obj(obj);
     for i in 0..(n-2) {
         let a = ((i + 2) as f64)/(n as f64);
-        let e = (xs[i + 1].powi(2) + 1.5*xs[i + 1] - a)*xs[i + 2].cos() - xs[i];
+        let e = (xs[i + 1].powi(2) + 1.5*xs[i + 1] - a)*xs[i + 2].cos()
+            - xs[i];
         //println!("{:?}", e);
         m.add_con(e, 0.0, 0.0);
     }

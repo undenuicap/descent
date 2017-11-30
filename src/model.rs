@@ -1,4 +1,4 @@
-use expression::{Film, Store, ID, Var, Par, WorkSpace, Retrieve};
+use expr::{Expr, Store, ID, Var, Par, Retrieve};
 
 //pub enum VarType {
 //    Continuous,
@@ -12,8 +12,8 @@ pub struct Con(pub ID); // Constraint ID
 pub trait Model {
     fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var;
     fn add_par(&mut self, val: f64) -> Par;
-    fn add_con(&mut self, film: Film, lb: f64, ub: f64) -> Con;
-    fn set_obj(&mut self, film: Film);
+    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> Con;
+    fn set_obj(&mut self, expr: Expr);
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>);
     fn warm_solve(&mut self, sol: Solution) ->
         (SolutionStatus, Option<Solution>);
@@ -32,6 +32,7 @@ pub enum SolutionStatus {
     Other,
 }
 
+#[derive(Default)]
 pub struct Solution {
     pub obj_val: f64,
     pub store: Store,
@@ -41,19 +42,13 @@ pub struct Solution {
 }
 
 impl Solution {
-    pub fn new() -> Solution {
-        Solution {
-            obj_val: 0.0,
-            store: Store::new(),
-            con_mult: Vec::new(),
-            var_lb_mult: Vec::new(),
-            var_ub_mult: Vec::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn value(&self, film: &Film) -> f64 {
+    pub fn value(&self, expr: &Expr) -> f64 {
         let mut ns = Vec::new(); // could pass this in
-        film.eval(&self.store, &mut ns)
+        expr.eval(&self.store, &mut ns)
     }
 
     pub fn var(&self, Var(id): Var) -> f64 {
@@ -64,7 +59,7 @@ impl Solution {
         self.con_mult[cid]
     }
     
-    // Could write versions that take Film, and try and match ops[0] to Var
+    // Could write versions that take Expr, and try and match ops[0] to Var
     pub fn var_lb_mult(&self, Var(vid): Var) -> f64 {
         self.var_lb_mult[vid]
     }

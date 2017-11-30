@@ -1,7 +1,7 @@
 extern crate fnv;
 
-use expression::{Var, Par, ID};
-use expression::{Film, FilmInfo, Retrieve, WorkSpace, Column};
+use expr::{Var, Par, ID};
+use expr::{Expr, ExprInfo, Retrieve, WorkSpace, Column};
 use model::{Model, Solution, SolutionStatus, Con};
 use ipopt;
 use std::slice;
@@ -22,15 +22,15 @@ struct Parameter {
 }
 
 struct Constraint {
-    film: Film,
-    info: FilmInfo,
+    expr: Expr,
+    info: ExprInfo,
     lb: f64,
     ub: f64,
 }
 
 struct Objective {
-    film: Film,
-    info: FilmInfo,
+    expr: Expr,
+    info: ExprInfo,
 }
 
 struct ModelData {
@@ -70,29 +70,38 @@ pub struct IpoptModel {
     prepared: bool, // problem prepared
 }
 
-impl IpoptModel {
-    pub fn new() -> IpoptModel {
+impl Default for IpoptModel {
+    fn default() -> Self {
         IpoptModel {
             model: ModelData {
                 vars: Vec::new(),
                 pars: Vec::new(),
                 cons: Vec::new(),
-                obj: Objective { film: Film::from(0.0), info: FilmInfo::new() },
+                obj: Objective {
+                    expr: Expr::from(0.0),
+                    info: ExprInfo::new()
+                },
             },
             cache: None,
             prob: None,
             prepared: false,
         }
     }
+}
+
+impl IpoptModel {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     fn prepare(&mut self) {
-        // Have a problem if Film is empty.  Don't know how to easy enforce
-        // a non-empty Film.  Could verify them, but then makes interface
+        // Have a problem if Expr is empty.  Don't know how to easy enforce
+        // a non-empty Expr.  Could verify them, but then makes interface
         // clumbsy.  Could panic late like here.
         // Hrmm should possibly verify at the prepare phase.  Then return solve
         // error if things go bad.
-        // Other option is to check as added to model (so before FilmInfo is
-        // called).  Ideally should design interface/operations on FilmInfo
+        // Other option is to check as added to model (so before ExprInfo is
+        // called).  Ideally should design interface/operations on ExprInfo
         // so that an empty/invalid value is not easily created/possible.
         if self.prepared && self.cache.is_some() || self.prob.is_some() {
             return; // If still valid don't prepare again
@@ -242,13 +251,13 @@ impl IpoptModel {
                 // should not affect the values).
                 cache.cons_const.clear();
                 for c in &self.model.cons {
-                    cache.cons_const.push(c.film.auto_const(&c.info,
+                    cache.cons_const.push(c.expr.auto_const(&c.info,
                                                             &sol.store,
                                                             &mut cache.ws));
                 }
 
                 let obj = &self.model.obj;
-                cache.obj_const = obj.film.auto_const(&obj.info, &sol.store,
+                cache.obj_const = obj.expr.auto_const(&obj.info, &sol.store,
                                                       &mut cache.ws);
 
                 let mut cb_data = IpoptCBData {
@@ -309,7 +318,7 @@ impl HesSparsity {
         *self.sp.entry(eid).or_insert(id)
     }
 
-    fn add_con(&mut self, info: &FilmInfo) {
+    fn add_con(&mut self, info: &ExprInfo) {
         let mut v = Vec::new();
         for &(li1, li2) in &info.quad {
             // get the non-local variable ids
@@ -324,7 +333,7 @@ impl HesSparsity {
         self.cons_inds.push(v);
     }
 
-    fn add_obj(&mut self, info: &FilmInfo) {
+    fn add_obj(&mut self, info: &ExprInfo) {
         for &(li1, li2) in &info.quad {
             // get the non-local variable ids
             let ind = self.get_index((info.nlin[li1], info.nlin[li2]));
@@ -363,20 +372,20 @@ impl Model for IpoptModel {
         Par(id)
     }
 
-    fn add_con(&mut self, film: Film, lb: f64, ub: f64) -> Con {
+    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> Con {
         self.prepared = false;
         let id = self.model.cons.len();
-        let info = film.get_info();
+        let info = expr.get_info();
         //println!("{:?}", info);
-        self.model.cons.push(Constraint { film: film, info: info,
+        self.model.cons.push(Constraint { expr: expr, info: info,
             lb: lb, ub: ub });
         Con(id)
     }
 
-    fn set_obj(&mut self, film: Film) {
+    fn set_obj(&mut self, expr: Expr) {
         self.prepared = false;
-        let info = film.get_info();
-        self.model.obj = Objective { film: film, info: info };
+        let info = expr.get_info();
+        self.model.obj = Objective { expr: expr, info: info };
     }
 
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
@@ -410,13 +419,13 @@ impl<'a> Retrieve for Store<'a> {
 
 fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
     let obj = &cb_data.model.obj;
-    cb_data.cache.obj = obj.film.auto_dynam(&obj.info, store,
+    cb_data.cache.obj = obj.expr.auto_dynam(&obj.info, store,
                                             &mut cb_data.cache.ws);
 }
 
 fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
     for (i, c) in cb_data.model.cons.iter().enumerate() {
-        cb_data.cache.cons[i] = c.film.auto_dynam(&c.info, store,
+        cb_data.cache.cons[i] = c.expr.auto_dynam(&c.info, store,
                                                   &mut cb_data.cache.ws);
     }
 }
@@ -685,18 +694,18 @@ extern fn l_hess(
             ind_pos += 1;
         }
 
-        for i in 0..(m as usize) {
+        for (i, l) in lam.iter().enumerate() {
             ind_pos = 0;
 
             for v in &cb_data.cache.cons_const[i].der2 {
                 let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
-                values[vind] += lam[i]*v;
+                values[vind] += l*v;
                 ind_pos += 1;
             }
 
             for v in &cb_data.cache.cons[i].der2 {
                 let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
-                values[vind] += lam[i]*v;
+                values[vind] += l*v;
                 ind_pos += 1;
             }
         }
@@ -708,7 +717,7 @@ extern fn l_hess(
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use expression::NumOpsF;
+    use expr::NumOps;
     use super::*;
     #[test]
     fn univar_problem() {
@@ -804,7 +813,7 @@ mod tests {
         for _i in 0..n {
             xs.push(m.add_var(-1.5, 0.0, -0.5));
         }
-        let mut obj = Film::from(0.0);
+        let mut obj = Expr::from(0.0);
         for &x in &xs {
             obj = obj + (x - 1.0).powi(2);
         }
