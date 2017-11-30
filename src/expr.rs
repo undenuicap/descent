@@ -325,6 +325,11 @@ impl ExprInfo {
 ///
 /// In the mathematical working `n` represents a node, and it has the set of
 /// operands js.
+///
+// In general an expression needs to be constructed so that the operation
+// references point to a valid location.  We should limit the interface so that
+// it becomes difficult/impossible for someone outside this mod to create an
+// invalid expression.
 #[derive(Debug, Clone)]
 pub struct Expr {
     ops: Vec<Oper>,
@@ -382,7 +387,7 @@ impl Expr {
     /// ```text
     /// nd = \sum_{j in js} nd_j dn/dn_j
     /// ```
-    pub fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
+    fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
         use self::Var;
         nds.resize(self.ops.len(), 0.0);
@@ -431,8 +436,8 @@ impl Expr {
     /// ```text
     /// na1_j = na1 dn/dn_j
     /// ```
-    pub fn der1_rev(&self, v1s: &[ID], ns: &[f64], na1s: &mut Vec<f64>,
-                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+    fn der1_rev(&self, v1s: &[ID], ns: &[f64], na1s: &mut Vec<f64>,
+                ids: &mut HashMap<ID, f64>) -> Vec<f64> {
         use self::Oper::*;
         use self::Var;
 
@@ -523,9 +528,9 @@ impl Expr {
     /// Once a terminal variable is reached, the second adjoint is combined
     /// with the second adjoint of the variable if it appears anywhere else in
     /// the expression
-    pub fn der2_rev(&self, dl2: &[ID], ns: &[f64], nds: &[f64],
-                    na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
-                    ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+    fn der2_rev(&self, dl2: &[ID], ns: &[f64], nds: &[f64],
+                na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
+                ids: &mut HashMap<ID, f64>) -> Vec<f64> {
         use self::Oper::*;
         use self::Var;
 
@@ -615,9 +620,9 @@ impl Expr {
     }
 
     /// Value, and derivatives using forward method.
-    pub fn full_fwd<'a>(&self, v1s: &[ID], v2s: &[(usize, usize)],
-                        ret: &Retrieve,
-                        cols: &'a mut Vec<Column>) -> &'a Column {
+    fn full_fwd<'a>(&self, v1s: &[ID], v2s: &[(usize, usize)],
+                    ret: &Retrieve,
+                    cols: &'a mut Vec<Column>) -> &'a Column {
         use self::Oper::*;
         use self::{Var, Par};
         // Only resize up
@@ -792,8 +797,8 @@ impl Expr {
     /// Value, and derivatives using both forward and reverse method.
     ///
     /// `v1s` and `vl2s` must be same length.
-    pub fn full_fwd_rev(&self, v1s: &[ID], vl2s: &[Vec<ID>],
-                        ret: &Retrieve, ws: &mut WorkSpace) -> Column {
+    fn full_fwd_rev(&self, v1s: &[ID], vl2s: &[Vec<ID>],
+                    ret: &Retrieve, ws: &mut WorkSpace) -> Column {
         let mut col = Column::new();
 
         col.val = self.eval(ret, &mut ws.ns);
@@ -816,6 +821,14 @@ impl Expr {
     }
 
     /// Constant derivatives by method auto selection.
+    ///
+    /// It is the users resposibility to pass in a valid `Retrieve` for the
+    /// variables and parameters present in the expression. Likewise the
+    /// `ExprInfo` should be for the actual expression, and up to date.
+    ///
+    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
+    /// call it on demand.  Might have to have some internal state to track
+    /// if Expr has been changed and this needs to be called again.
     pub fn auto_const(&self, info: &ExprInfo, store: &Retrieve,
                      ws: &mut WorkSpace) -> Column {
         let mut col = Column::new();
@@ -835,6 +848,14 @@ impl Expr {
     }
 
     /// Dynamic values/derivatives by method auto selection.
+    ///
+    /// It is the users resposibility to pass in a valid `Retrieve` for the
+    /// variables and parameters present in the expression.  Likewise the
+    /// `ExprInfo` should be for the actual expression, and up to date.
+    ///
+    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
+    /// call it on demand.  Might have to have some internal state to track
+    /// if Expr has been changed and this needs to be called again.
     pub fn auto_dynam(&self, info: &ExprInfo, store: &Retrieve,
                       ws: &mut WorkSpace) -> Column {
         if info.nlin.is_empty() {
