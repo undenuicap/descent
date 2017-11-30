@@ -366,17 +366,17 @@ impl Model for IpoptModel {
     fn add_con(&mut self, film: Film, lb: f64, ub: f64) -> Con {
         self.prepared = false;
         let id = self.model.cons.len();
-        let finfo = film.get_info();
-        //println!("{:?}", finfo);
-        self.model.cons.push(Constraint { film: film, info: finfo,
+        let info = film.get_info();
+        //println!("{:?}", info);
+        self.model.cons.push(Constraint { film: film, info: info,
             lb: lb, ub: ub });
         Con(id)
     }
 
     fn set_obj(&mut self, film: Film) {
         self.prepared = false;
-        let finfo = film.get_info();
-        self.model.obj = Objective { film: film, info: finfo };
+        let info = film.get_info();
+        self.model.obj = Objective { film: film, info: info };
     }
 
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
@@ -797,26 +797,26 @@ mod tests {
     }
 
     #[bench]
-    fn large_problem(b: &mut test::Bencher) {
-        let n = 10;
+    fn solve_larger(b: &mut test::Bencher) {
+        let n = 5;
+        let mut m = IpoptModel::new();
+        let mut xs = Vec::new();
+        for _i in 0..n {
+            xs.push(m.add_var(-1.5, 0.0, -0.5));
+        }
+        let mut obj = Film::from(0.0);
+        for &x in &xs {
+            obj = obj + (x - 1.0).powi(2);
+        }
+        m.set_obj(obj);
+        for i in 0..(n-2) {
+            let a = ((i + 2) as f64)/(n as f64);
+            let e = (xs[i + 1].powi(2) + 1.5*xs[i + 1] - a)*xs[i + 2].cos()
+                - xs[i];
+            m.add_con(e, 0.0, 0.0);
+        }
+        m.silence();
         b.iter(|| {
-            let mut m = IpoptModel::new();
-            let mut xs = Vec::new();
-            for _i in 0..n {
-                xs.push(m.add_var(-1.5, 0.0, -0.5));
-            }
-            let mut obj = Film::from(0.0);
-            for &x in &xs {
-                obj = obj + (x - 1.0).powi(2);
-            }
-            m.set_obj(obj);
-            for i in 0..(n-2) {
-                let a = ((i + 2) as f64)/(n as f64);
-                let e = (xs[i + 1].powi(2) + 1.5*xs[i + 1] - a)*xs[i + 2].cos()
-                    - xs[i];
-                m.add_con(e, 0.0, 0.0);
-            }
-            m.silence();
             m.solve();
         });
     }
