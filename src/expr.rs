@@ -341,47 +341,23 @@ impl Expr {
             let (left, right) = ns.split_at_mut(i);
             let cur = &mut right[0]; // the i value from original
             match *op {
-                Add(j) => {
-                    *cur = left[i - 1] + left[j];
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    *cur = left[j] - left[i - 1];
-                },
-                Mul(j) => {
-                    *cur = left[i - 1]*left[j];
-                },
-                Neg => {
-                    *cur = -left[i - 1];
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    *cur = left[i - 1].powi(pow);
-                },
-                Sin => {
-                    *cur = left[i - 1].sin();
-                },
-                Cos => {
-                    *cur = left[i - 1].cos();
-                },
+                Add(j) => *cur = left[i - 1] + left[j],
+                Sub(j) => *cur = left[j] - left[i - 1],
+                Mul(j) => *cur = left[i - 1]*left[j],
+                Neg => *cur = -left[i - 1],
+                Pow(pow) => *cur = left[i - 1].powi(pow),
+                Sin => *cur = left[i - 1].sin(),
+                Cos => *cur = left[i - 1].cos(),
                 Sum(ref js) => {
                     *cur = left[i - 1];
                     for &j in js {
                         *cur += left[j];
                     }
-                },
-                Square => {
-                    *cur = left[i - 1]*left[i - 1];
-                },
-                Variable(Var(id)) => {
-                    *cur = ret.get_var(id);
-                },
-                Parameter(Par(id)) => {
-                    *cur = ret.get_par(id);
-                },
-                Float(val) => {
-                    *cur = val;
-                },
+                }
+                Square => *cur = left[i - 1]*left[i - 1],
+                Variable(Var(id)) => *cur = ret.get_var(id),
+                Parameter(Par(id)) => *cur = ret.get_par(id),
+                Float(val) => *cur = val,
             }
         }
         ns[self.ops.len() - 1]
@@ -414,44 +390,23 @@ impl Expr {
             let (left, right) = nds.split_at_mut(i);
             let cur = &mut right[0]; // the i value from original
             match *op {
-                Add(j) => {
-                    *cur = left[i - 1] + left[j];
-                },
-                Sub(j) => {
-                    // Take note of order where oth - pre 
-                    *cur = left[j] - left[i - 1];
-                },
-                Mul(j) => {
-                    *cur = left[i - 1]*ns[j] + left[j]*ns[i - 1]
-                },
-                Neg => {
-                    *cur = -left[i - 1];
-                },
-                Pow(pow) => {
-                    // Assume it is not 0 or 1
-                    *cur = f64::from(pow)*left[i - 1]*ns[i - 1].powi(pow - 1);
-                },
-                Sin => {
-                    *cur = left[i - 1]*ns[i - 1].cos();
-                },
-                Cos => {
-                    *cur = -left[i - 1]*ns[i - 1].sin();
-                },
+                Add(j) => *cur = left[i - 1] + left[j],
+                Sub(j) => *cur = left[j] - left[i - 1],
+                Mul(j) => *cur = left[i - 1]*ns[j] + left[j]*ns[i - 1],
+                Neg => *cur = -left[i - 1],
+                Pow(pow) => *cur = f64::from(pow)*left[i - 1]
+                    *ns[i - 1].powi(pow - 1),
+                Sin => *cur = left[i - 1]*ns[i - 1].cos(),
+                Cos => *cur = -left[i - 1]*ns[i - 1].sin(),
                 Sum(ref js) => {
                     *cur = left[i - 1];
                     for &j in js {
                         *cur += left[j];
                     }
-                },
-                Square => {
-                    *cur = 2.0*left[i - 1]*ns[i - 1];
-                },
-                Variable(Var(id)) => {
-                    *cur = if id == v1 { 1.0 } else { 0.0 };
-                },
-                _ => {
-                    *cur = 0.0;
-                },
+                }
+                Square => *cur = 2.0*left[i - 1]*ns[i - 1],
+                Variable(Var(id)) => *cur = if id == v1 { 1.0 } else { 0.0 },
+                _ => *cur = 0.0,
             }
         }
         nds[self.ops.len() - 1]
@@ -497,44 +452,44 @@ impl Expr {
                 Add(j) => {
                     left[i - 1] = cur;
                     left[j] = cur;
-                },
+                }
                 Sub(j) => {
                     // Take note of order where oth - pre 
                     left[i - 1] = -cur;
                     left[j] = cur;
-                },
+                }
                 Mul(j) => {
                     left[i - 1] = ns[j]*cur;
                     left[j] = ns[i - 1]*cur;
-                },
+                }
                 Neg => {
                     left[i - 1] = -cur;
-                },
+                }
                 Pow(pow) => {
                     // Assume it is not 0 or 1
                     left[i - 1] = f64::from(pow)*ns[i - 1].powi(pow - 1)*cur;
-                },
+                }
                 Sin => {
                     left[i - 1] = ns[i - 1].cos()*cur;
-                },
+                }
                 Cos => {
                     left[i - 1] = -ns[i - 1].sin()*cur;
-                },
+                }
                 Sum(ref js) => {
                     left[i - 1] = cur;
                     for &j in js {
                         left[j] = cur;
                     }
-                },
+                }
                 Square => {
                     left[i - 1] = 2.0*ns[i - 1]*cur;
-                },
+                }
                 Variable(Var(id)) => {
                     if let Some(v) = ids.get_mut(&id) {
                         *v += cur;
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
         let mut der1 = Vec::new();
@@ -596,24 +551,24 @@ impl Expr {
                     l2[i - 1] = c2;
                     l1[j] = c1;
                     l2[j] = c2;
-                },
+                }
                 Sub(j) => {
                     // Take note of order where oth - pre 
                     l1[i - 1] = -c1;
                     l2[i - 1] = -c2;
                     l1[j] = c1;
                     l2[j] = c2;
-                },
+                }
                 Mul(j) => {
                     l1[i - 1] = c1*ns[j];
                     l2[i - 1] = c2*ns[j] + c1*nds[j];
                     l1[j] = c1*ns[i - 1];
                     l2[j] = c2*ns[i - 1] + c1*nds[i - 1];
-                },
+                }
                 Neg => {
                     l1[i - 1] = -c1;
                     l2[i - 1] = -c2;
-                },
+                }
                 Pow(pow) => {
                     // Assume it is not 0 or 1
                     let vald = f64::from(pow)*ns[i - 1].powi(pow - 1);
@@ -621,17 +576,17 @@ impl Expr {
                                 *ns[i - 1].powi(pow - 2);
                     l1[i - 1] = c1*vald;
                     l2[i - 1] = c2*vald + c1*valdd*nds[i - 1];
-                },
+                }
                 Sin => {
                     l1[i - 1] = c1*ns[i - 1].cos();
                     l2[i - 1] = c2*ns[i - 1].cos()
                                 - c1*ns[i - 1].sin()*nds[i - 1];
-                },
+                }
                 Cos => {
                     l1[i - 1] = -c1*ns[i - 1].sin();
                     l2[i - 1] = -c2*ns[i - 1].sin()
                                 - c1*ns[i - 1].cos()*nds[i - 1];
-                },
+                }
                 Sum(ref js) => {
                     l1[i - 1] = c1;
                     l2[i - 1] = c2;
@@ -639,17 +594,17 @@ impl Expr {
                         l1[j] = c1;
                         l2[j] = c2;
                     }
-                },
+                }
                 Square => {
                     l1[i - 1] = c1*2.0*ns[i - 1];
                     l2[i - 1] = c2*2.0*ns[i - 1] + c1*2.0*nds[i - 1];
-                },
+                }
                 Variable(Var(id)) => {
                     if let Some(v) = ids.get_mut(&id) {
                         *v += c2;
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
         let mut der2 = Vec::new();
@@ -687,7 +642,7 @@ impl Expr {
                             .zip(pre.der2.iter()).zip(oth.der2.iter()) {
                         *c = p + o;
                     }
-                },
+                }
                 Sub(j) => {
                     // Take note of order where oth - pre 
                     let pre = &left[i - 1];
@@ -701,7 +656,7 @@ impl Expr {
                             .zip(pre.der2.iter()).zip(oth.der2.iter()) {
                         *c = o - p;
                     }
-                },
+                }
                 Mul(j) => {
                     let pre = &left[i - 1];
                     let oth = &left[j];
@@ -717,7 +672,7 @@ impl Expr {
                              + pre.der1[k1]*oth.der1[k2]
                              + pre.der1[k2]*oth.der1[k1];
                     }
-                },
+                }
                 Neg => {
                     let pre = &left[i - 1];
                     cur.val = -pre.val;
@@ -727,7 +682,7 @@ impl Expr {
                     for (c, p) in cur.der2.iter_mut().zip(pre.der2.iter()) {
                         *c = -p;
                     }
-                },
+                }
                 Pow(pow) => {
                     // Assume it is not 0 or 1
                     let pre = &left[i - 1];
@@ -742,7 +697,7 @@ impl Expr {
                             .zip(pre.der2.iter()).zip(v2s.iter()) {
                         *c = p*vald + pre.der1[k1]*pre.der1[k2]*valdd;
                     }
-                },
+                }
                 Sin => {
                     let pre = &left[i - 1];
                     cur.val = pre.val.sin();
@@ -754,7 +709,7 @@ impl Expr {
                             .zip(pre.der2.iter()).zip(v2s.iter()) {
                         *c = p*valcos - pre.der1[k1]*pre.der1[k2]*cur.val;
                     }
-                },
+                }
                 Cos => {
                     let pre = &left[i - 1];
                     cur.val = pre.val.cos();
@@ -766,7 +721,7 @@ impl Expr {
                             .zip(pre.der2.iter()).zip(v2s.iter()) {
                         *c = -p*valsin - pre.der1[k1]*pre.der1[k2]*cur.val;
                     }
-                },
+                }
                 Sum(ref js) => {
                     let pre = &left[i - 1];
                     cur.val = pre.val;
@@ -789,7 +744,7 @@ impl Expr {
                             cur.der2[k] += oth.der2[k];
                         }
                     }
-                },
+                }
                 Square => {
                     let pre = &left[i - 1];
                     cur.val = pre.val*pre.val;
@@ -801,7 +756,7 @@ impl Expr {
                             .zip(pre.der2.iter()).zip(v2s.iter()) {
                         *c = 2.0*p*pre.val + 2.0*pre.der1[k1]*pre.der1[k2];
                     }
-                },
+                }
                 Variable(Var(id)) => {
                     cur.val = ret.get_var(id);
                     for (c, did) in cur.der1.iter_mut().zip(v1s.iter()) {
@@ -810,7 +765,7 @@ impl Expr {
                     for c in &mut cur.der2 {
                         *c = 0.0;
                     }
-                },
+                }
                 Parameter(Par(id)) => {
                     cur.val = ret.get_par(id);
                     for c in &mut cur.der1 {
@@ -819,7 +774,7 @@ impl Expr {
                     for c in &mut cur.der2 {
                         *c = 0.0;
                     }
-                },
+                }
                 Float(val) => {
                     cur.val = val;
                     for c in &mut cur.der1 {
@@ -828,7 +783,7 @@ impl Expr {
                     for c in &mut cur.der2 {
                         *c = 0.0;
                     }
-                },
+                }
             }
         }
         &cols[self.ops.len() - 1]
@@ -906,52 +861,30 @@ impl Expr {
         let mut degs: Vec<Degree> = Vec::new();
         for (i, op) in self.ops.iter().enumerate() {
             let d = match *op {
-                Add(j) | Sub(j) => {
-                    degs[i - 1].union(&degs[j])
-                },
-                Mul(j) => {
-                    degs[i - 1].cross(&degs[j])
-                },
-                Neg => {
-                    degs[i - 1].clone()
-                },
+                Add(j) | Sub(j) => degs[i - 1].union(&degs[j]),
+                Mul(j) => degs[i - 1].cross(&degs[j]),
+                Neg => degs[i - 1].clone(),
                 Pow(p) => {
                     // Even though shouldn't have 0 or 1, might as well match
                     // anyway
                     match p {
-                        0 => {
-                            Degree::new()
-                        },
-                        1 => {
-                            degs[i - 1].clone()
-                        },
-                        2 => {
-                            degs[i - 1].cross(&degs[i - 1])
-                        },
-                        _ => {
-                            degs[i - 1].highest()
-                        },
+                        0 => Degree::new(),
+                        1 => degs[i - 1].clone(),
+                        2 => degs[i - 1].cross(&degs[i - 1]),
+                        _ => degs[i - 1].highest(),
                     }
-                },
+                }
                 Sum(ref js) => {
                     let mut deg = degs[i - 1].clone();
                     for &j in js {
                         deg = deg.union(&degs[j]);
                     }
                     deg
-                },
-                Square => {
-                    degs[i - 1].cross(&degs[i - 1])
-                },
-                Sin | Cos => {
-                    degs[i - 1].highest()
-                },
-                Variable(Var(id)) => {
-                    Degree::with_id(id)
-                },
-                _ => {
-                    Degree::new()
-                },
+                }
+                Square => degs[i - 1].cross(&degs[i - 1]),
+                Sin | Cos => degs[i - 1].highest(),
+                Variable(Var(id)) => Degree::with_id(id),
+                _ => Degree::new(),
             };
             degs.push(d);
         }
@@ -972,14 +905,12 @@ impl Expr {
         use self::Oper::*;
         for op in &mut self.ops {
             match *op {
-                Add(ref mut j) | Sub(ref mut j) | Mul(ref mut j) => {
-                    *j += n;
-                },
+                Add(ref mut j) | Sub(ref mut j) | Mul(ref mut j) => *j += n,
                 Sum(ref mut js) => {
                     for j in js {
                         *j += n;
                     }
-                },
+                }
                 _ => (),
             }
         }
@@ -1040,18 +971,10 @@ impl NumOps for Expr {
 
         // Match now so don't have to later
         match p {
-            0 => {
-                self.add_op(Oper::Float(1.0));
-            },
-            1 => {
-                // don't add anything
-            },
-            2 => {
-                self.add_op(Oper::Square);
-            },
-            _ => {
-                self.add_op(Oper::Pow(p));
-            },
+            0 => self.add_op(Oper::Float(1.0)),
+            1 => (), //don't add anything
+            2 => self.add_op(Oper::Square),
+            _ => self.add_op(Oper::Pow(p)),
         }
         self
     }
@@ -1205,19 +1128,19 @@ impl std::ops::Add<Expr> for Expr {
             //        let js = vec![j, n - 1];
             //        self.append(other);
             //        self.add_op(Oper::Sum(js));
-            //    },
+            //    }
             //    Oper::Sum(mut js) => {
             //        let n = self.ops.len();
             //        js.push(n - 1);
             //        self.append(other);
             //        self.add_op(Oper::Sum(js));
-            //    },
+            //    }
             //    op => {
             //        let n = self.ops.len();
             //        self.ops.push(op); // push back on
             //        self.append(other);
             //        self.add_op(Oper::Add(n));
-            //    },
+            //    }
             //}
             self
         }
