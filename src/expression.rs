@@ -46,10 +46,12 @@ enum Operation {
     // MulFloat(f64)
 }
 
-// Contract: lin and nlin must be disjoint
-// Contract: quad and nquad must be disjoint
-// Contract: IDs in pairs must be ordered
-// Contract: all IDs in quad and nquad must be in nlin
+/// Representation of the degree of variables from an expression.
+///
+/// - `lin` and `nlin` must be disjoint
+/// - `quad` and `nquad` must be disjoint
+/// - `ID`s in pairs must be ordered
+/// - all `ID`s in `quad` and `nquad` must be in `nlin`
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct Deg {
     lin: HashSet<ID>,
@@ -195,6 +197,11 @@ impl From<Deg> for FilmInfo {
 
         info.quad.sort();
         info.nquad.sort();
+
+        // Not always required...
+        info.quad_list = nlin_list(&info.nlin, &info.quad);
+        info.nquad_list = nlin_list(&info.nlin, &info.nquad);
+
         info
     }
 }
@@ -365,45 +372,54 @@ impl WorkSpace {
     }
 }
 
+#[derive(Debug, Clone)]
+enum Approach {
+    Pass,
+    Value,
+    FirstFwd,
+    FirstRev,
+    SeconFwd,
+    /// Mapping from `nlin` to paired derivatives.
+    SeconRev(Vec<Vec<ID>>),
+}
+
+/// Information about a `Film` for guiding AD process.
+///
+/// Linear and quadratic respective first and second derivatives only need to
+/// be computed once on parameter change.  The `usize` pairs represent indices
+/// into `nlin`.  They are local variable mappings.
+///
+/// The contracts from `Deg` are expected to be held.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FilmInfo {
-    // Linear and quadratic respective first and second derivatives only need
-    // to be computed once on parameter change.
-    pub lin: Vec<ID>, // const derivative
-    pub nlin: Vec<ID>, // non-const derivative
-    // Below the usize are indices into nlin, a variable representation
-    // that is local
-    pub quad: Vec<(usize, usize)>, // const second derivative
-    pub nquad: Vec<(usize, usize)>, // non-const second derivative
+    /// Constant first derivative
+    pub lin: Vec<ID>,
+    /// Non-constant first derivative
+    pub nlin: Vec<ID>,
+    /// Constant second derivative
+    pub quad: Vec<(usize, usize)>,
+    /// Non-constant second derivative
+    pub nquad: Vec<(usize, usize)>,
+    pub quad_list: Vec<Vec<ID>>,
+    pub nquad_list: Vec<Vec<ID>>,
+}
+
+/// Maps for each `nlin` entry to `ID`s that pair in with it in `quad`/`nquad`.
+///
+/// When everything is ordered, when traversed it will preserve original
+/// `quad`/`nquad` orderings.
+fn nlin_list(nlin: &Vec<ID>, sec: &Vec<(usize, usize)>) -> Vec<Vec<ID>>{
+    let mut vs: Vec<Vec<ID>> = Vec::new();
+    vs.resize(nlin.len(), Vec::new());
+    for &(i, j) in sec {
+        vs[i].push(nlin[j]);
+    }
+    vs
 }
 
 impl FilmInfo {
     pub fn new() -> FilmInfo {
         FilmInfo::default()
-    }
-
-    // List which maps each nlin entry to IDs that pair in quad
-    // Because everything is ordered, when traversed it will preserve original
-    // quad ordering
-    pub fn quad_list(&self) -> Vec<Vec<ID>> {
-        let mut vs: Vec<Vec<ID>> = Vec::new();
-        vs.resize(self.nlin.len(), Vec::new());
-        for &(i, j) in &self.quad {
-            vs[i].push(self.nlin[j]);
-        }
-        vs
-    }
-
-    // List which maps each nlin entry to IDs that pair in nquad
-    // Because everything is ordered, when traversed it will preserve original
-    // nquad ordering
-    pub fn nquad_list(&self) -> Vec<Vec<ID>> {
-        let mut vs: Vec<Vec<ID>> = Vec::new();
-        vs.resize(self.nlin.len(), Vec::new());
-        for &(i, j) in &self.nquad {
-            vs[i].push(self.nlin[j]);
-        }
-        vs
     }
 }
 
@@ -897,17 +913,28 @@ impl Film {
 
         col.val = self.eval(ret, &mut ws.ns);
 
-        for (&id, oids) in d1.iter().zip(d2.iter()) {
-            col.der1.push(self.der1_fwd(id, ret, &ws.ns, &mut ws.nds));
+        for (i, (&id, oids)) in d1.iter().zip(d2.iter()).enumerate() {
             if !oids.is_empty() {
+                col.der1.push(self.der1_fwd(id, ret, &ws.ns, &mut ws.nds));
                 col.der2.append(&mut self.der2_rev(oids, ret, &ws.ns, &ws.nds, 
                                                    &mut ws.na1s, &mut ws.na2s,
                                                    &mut ws.ids));
             }
         }
+        // Check if all first derivatives were calculated, and if not just use
+        // the reverse method.
+        if col.der1.len() < d1.len() {
+            col.der1 = self.der1_rev(d1, ret, &ws.ns, &mut ws.na1s,
+                                     &mut ws.ids);
+        }
         
         col
     }
+
+    //pub fn full_auto_quad(&self, ret: &Retrieve, ws: &mut WorkSpace) ->
+    //                      Column {
+    //    // Work
+    //}
 
     pub fn get_info(&self) -> FilmInfo {
         use self::Oper::*;
@@ -2553,6 +2580,8 @@ mod tests {
             nlin: vec![1],
             quad: vec![(0, 0)],
             nquad: vec![],
+            quad_list: vec![vec![1]],
+            nquad_list: vec![vec![]],
         }); 
     }
 
@@ -2688,9 +2717,9 @@ mod tests {
         let v = f.eval(&store, &mut ws.ns);
         let der1 = f.der1_rev(&vec![0, 1], &store, &ws.ns, &mut ws.na1s,
                              &mut ws.ids);
-        let quad_col = f.full_fwd_rev(&finfo.nlin, &finfo.quad_list(),
+        let quad_col = f.full_fwd_rev(&finfo.nlin, &finfo.quad_list,
                                       &store, &mut ws);
-        let nquad_col = f.full_fwd_rev(&finfo.nlin, &finfo.nquad_list(),
+        let nquad_col = f.full_fwd_rev(&finfo.nlin, &finfo.nquad_list,
                                        &store, &mut ws);
 
         assert_eq!(quad_col.val, 20.0 + 5.0_f64.sin());
