@@ -738,20 +738,42 @@ impl Expr {
                         cur.val += oth.val;
                     }
 
-                    for k in 0..(v1s.len()) {
-                        cur.der1[k] = pre.der1[k];
-                        for &j in js {
-                            let oth = &left[i - j];
-                            cur.der1[k] += oth.der1[k];
+                    // Could just do a copy?
+                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
+                        *c = *p;
+                    }
+                    for &j in js {
+                        let oth = &left[i - j];
+                        for (c, o) in cur.der1.iter_mut()
+                                      .zip(oth.der1.iter()) {
+                            *c += *o;
                         }
                     }
-                    for k in 0..(v2s.len()) {
-                        cur.der2[k] = pre.der2[k];
-                        for &j in js {
-                            let oth = &left[i - j];
-                            cur.der2[k] += oth.der2[k];
+                    // Could just do a copy?
+                    for (c, p) in cur.der2.iter_mut().zip(pre.der2.iter()) {
+                        *c = *p;
+                    }
+                    for &j in js {
+                        let oth = &left[i - j];
+                        for (c, o) in cur.der2.iter_mut()
+                                      .zip(oth.der2.iter()) {
+                            *c += *o;
                         }
                     }
+                    //for k in 0..(v1s.len()) {
+                    //    cur.der1[k] = pre.der1[k];
+                    //    for &j in js {
+                    //        let oth = &left[i - j];
+                    //        cur.der1[k] += oth.der1[k];
+                    //    }
+                    //}
+                    //for k in 0..(v2s.len()) {
+                    //    cur.der2[k] = pre.der2[k];
+                    //    for &j in js {
+                    //        let oth = &left[i - j];
+                    //        cur.der2[k] += oth.der2[k];
+                    //    }
+                    //}
                 }
                 Square => {
                     let pre = &left[i - 1];
@@ -931,6 +953,25 @@ impl Expr {
     /// Append another expression.
     fn append(&mut self, mut other: Expr) {
         self.ops.append(&mut other.ops);
+    }
+
+    /// Must not be empty.
+    fn extract_add_orefs(&mut self, js: &mut Vec<ORef>) {
+        match self.ops.pop().unwrap() {
+            Oper::Add(j) => {
+                js.push(j);
+            }
+            Oper::Sub(j) => {
+                self.ops.push(Oper::Neg);
+                js.push(j + 1);
+            }
+            Oper::Sum(mut ljs) => {
+                js.append(&mut ljs);
+            }
+            op => {
+                self.ops.push(op); // push back on
+            }
+        }
     }
 }
 
@@ -1123,39 +1164,33 @@ binary_ops_with_expr!(Mul, mul, f64);
 impl std::ops::Add<Expr> for Expr {
     type Output = Expr;
 
-    fn add(mut self, other: Expr) -> Expr {
+    fn add(mut self, mut other: Expr) -> Expr {
         // Assuming add on empty Expr is like add by 0.0
         if self.ops.is_empty() {
             other
         } else if other.ops.is_empty() {
             self
         } else {
-            let j = other.len() + 1;
+            let mut js = Vec::new();
+            other.extract_add_orefs(&mut js);
+            let njs_other = js.len();
+            let n = other.len();
+            js.push(1 + n);
+            self.extract_add_orefs(&mut js);
+            for j in js.iter_mut().skip(njs_other + 1) {
+                *j += n;
+            }
+
             self.append(other);
-            self.add_op(Oper::Add(j));
-            //match self.ops.pop().unwrap() {
-            //    Oper::Add(j) => {
-            //        let n = other.len();
-            //        self.append(other);
-            //        self.add_op(Oper::Sum(vec![j + n, n + 1]));
-            //    }
-            //    Oper::Sum(mut js) => {
-            //        // Not ideal as slows down
-            //        let n = other.len();
-            //        for j in &mut js {
-            //            *j += n;
-            //        }
-            //        js.push(n + 1);
-            //        self.append(other);
-            //        self.add_op(Oper::Sum(js));
-            //    }
-            //    op => {
-            //        let j = other.len() + 1;
-            //        self.ops.push(op); // push back on
-            //        self.append(other);
-            //        self.add_op(Oper::Add(j));
-            //    }
-            //}
+            if js.len() > 1 {
+                self.add_op(Oper::Sum(js));
+            } else {
+                self.add_op(Oper::Add(n + 1));
+            }
+            // Use this to turn off sum
+            //let j = other.len() + 1;
+            //self.append(other);
+            //self.add_op(Oper::Add(j));
             self
         }
     }
@@ -1172,9 +1207,26 @@ impl std::ops::Sub<Expr> for Expr {
         } else if other.ops.is_empty() {
             self
         } else {
-            let j = other.len() + 1;
+            // Unlike Add cannot combine Add and Sum entries of other
+            let mut js = Vec::new();
+            let n = other.len();
+            js.push(1 + n + 1); // Will be adding Neg
+            self.extract_add_orefs(&mut js);
+            for j in js.iter_mut().skip(1) {
+                *j += n + 1;
+            }
+
             self.append(other);
-            self.add_op(Oper::Sub(j));
+            if js.len() > 1 {
+                self.add_op(Oper::Neg);
+                self.add_op(Oper::Sum(js));
+            } else {
+                self.add_op(Oper::Sub(n + 1));
+            }
+            // Use this to turn off sum
+            //let j = other.len() + 1;
+            //self.append(other);
+            //self.add_op(Oper::Sub(j));
             self
         }
     }
@@ -1286,23 +1338,39 @@ mod tests {
         }); 
     }
 
-    // Only expect to work when have operator overloading creating sums
-    //#[test]
-    //fn sum() {
-    //    let mut store = Store::new();
-    //    store.vars.push(5.0);
+    #[test]
+    fn sum() {
+        let mut store = Store::new();
+        store.vars.push(5.0);
 
-    //    let e = 5.0 + Var(0) + Var(0) + Var(0);
+        let e = 5.0 + Var(0) + Var(0) + Var(0);
+        let info = e.get_info();
 
-    //    let info = e.get_info();
+        //println!("{:?}", e);
+        //println!("{:?}", info);
+        let mut ws = WorkSpace::new();
+        let col = e.full_fwd(&info.lin, &Vec::new(), &store, &mut ws.cols);
 
-    //    //println!("{:?}", e);
-    //    //println!("{:?}", info);
-    //    let mut ws = WorkSpace::new();
-    //    let col = e.full_fwd(&info.lin, &Vec::new(), &store, &mut ws);
+        assert_eq!(e.len(), 5);
+        assert_eq!(col.val, 20.0);
+    }
 
-    //    assert_eq!(col.val, 20.0);
-    //}
+    #[test]
+    fn sum_sub() {
+        let mut store = Store::new();
+        store.vars.push(5.0);
+
+        let e = 5.0 - Var(0) - Var(0) - Var(0);
+        let info = e.get_info();
+
+        //println!("{:?}", e);
+        //println!("{:?}", info);
+        let mut ws = WorkSpace::new();
+        let col = e.full_fwd(&info.lin, &Vec::new(), &store, &mut ws.cols);
+
+        assert_eq!(e.len(), 8);
+        assert_eq!(col.val, -10.0);
+    }
 
     #[test]
     fn sin() {
