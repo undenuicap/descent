@@ -286,6 +286,19 @@ pub struct ExprInfo {
     pub nquad_list: Vec<Vec<ID>>,
 }
 
+///// Only really care about this for second derivatives. Can just call reverse
+///// method to get first derivatives instead of mapping them back.
+//#[derive(Debug, Clone, Default, PartialEq)]
+//pub struct SegInfo {
+//    /// Segment position in Expr
+//    pub pos: usize,
+//    pub info: ExprInfo,
+//    /// Map from local to parent position
+//    pub quad_map: Vec<usize>,
+//    /// Map from local to parent position
+//    pub nquad_map: Vec<usize>,
+//}
+
 /// Maps for each `nlin` entry to IDs that pair with it in `quad`/`nquad`.
 ///
 /// When everything is ordered, when traversed it will preserve original
@@ -899,6 +912,21 @@ impl Expr {
             //self.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
         }
     }
+
+    //auto_sep_dynam(&self, ginfo: &ExprInfo, sinfos: &Vec<SegInfo>,
+    //               store: &Retrieve, ws: &mut WorkSpace) -> Column {
+    //    let mut gcol: Column::new();
+    //    // Should call reverse method to get first derivatives and value
+    //    //gcol.der1.resize(ginfo.nlin.len(), 0.0);
+    //    gcol.der2.resize(ginfo.nquad.len(), 0.0);
+    //    for sinfo in &sinfos {
+    //        let col = self.full_fwd(&sinfo.info.nlin, &sinfo.info.nquad,
+    //                                store, &mut ws.cols);
+    //        for (i, d) in sinfo.nquad_map.iter().zip(col.der2.iter()) {
+    //            gcol.der2[i] += d;
+    //        }
+    //    }
+    //}
 
     /// Get information about the expression.
     pub fn get_info(&self) -> ExprInfo {

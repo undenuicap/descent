@@ -424,9 +424,9 @@ fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
 }
 
 fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
-    for (i, c) in cb_data.model.cons.iter().enumerate() {
-        cb_data.cache.cons[i] = c.expr.auto_dynam(&c.info, store,
-                                                  &mut cb_data.cache.ws);
+    for (cc, c) in cb_data.cache.cons.iter_mut()
+                   .zip(cb_data.model.cons.iter()) {
+        *cc = c.expr.auto_dynam(&c.info, store, &mut cb_data.cache.ws);
     }
 }
 
