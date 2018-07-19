@@ -411,6 +411,7 @@ impl Expr {
     /// ```text
     /// nd = \sum_{j in js} nd_j dn/dn_j
     /// ```
+    #[allow(dead_code)]
     fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
         use self::Var;
@@ -552,6 +553,7 @@ impl Expr {
     /// Once a terminal variable is reached, the second adjoint is combined
     /// with the second adjoint of the variable if it appears anywhere else in
     /// the expression
+    #[allow(dead_code)]
     fn der2_rev(&self, dl2: &[ID], ns: &[f64], nds: &[f64],
                 na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
                 ids: &mut HashMap<ID, f64>) -> Vec<f64> {
@@ -843,6 +845,7 @@ impl Expr {
     /// Value, and derivatives using both forward and reverse method.
     ///
     /// `v1s` and `vl2s` must be same length.
+    #[allow(dead_code)]
     fn full_fwd_rev(&self, v1s: &[ID], vl2s: &[Vec<ID>],
                     ret: &Retrieve, ws: &mut WorkSpace) -> Column {
         let mut col = Column::new();

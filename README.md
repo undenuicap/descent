@@ -18,6 +18,12 @@ with --release).
 
 The library could be expanded to link to other solvers.
 
+## Dependencies
+
+[Ipopt](https://projects.coin-or.org/Ipopt) (or
+[Bonmin](https://projects.coin-or.org/Bonmin)) must be separately installed
+before attempting to build as Descent links to libipopt.so shared library.
+
 ## Example
 
 Build and run the simple example problem:
@@ -29,8 +35,8 @@ cargo build --release --example simple
 
 ## Benchmarking
 
-For the test problem should turn on debug for release profile (in Cargo.toml),
-and then build and run using:
+For the test problem debug for the release profile should be turned on (in
+Cargo.toml), and then build and run using:
 
 ```
 cargo build --release --example problem
