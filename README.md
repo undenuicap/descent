@@ -9,7 +9,7 @@ This is in an early state of development but is working / useable.
 ## Design
 
 It supports operator overloading for the ergonomic expression of terms and the
-operators: +, -, \*, powi, sin, cos
+operators: +, -, \*, powi, sin, cos.
 
 It follows a similar design philosopy to the C++ / Python library
 [madopt](https://github.com/stanle/madopt). As they stand the AD routines are
@@ -39,9 +39,9 @@ cargo build --release --example problem
 
 ## Issues
 
-Currently large expressions that have to have their second derivatives
-computed are slow and memory intensive. As a work around for separable
-expressions, split them up manually. In the future hope to automate this.
+Currently large expressions that require their second derivatives computed are
+slow and memory intensive. As a work around for separable expressions, split
+them up manually. In the future should be able to automate this.
 
 ## License
 
