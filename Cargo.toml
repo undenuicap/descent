@@ -5,7 +5,9 @@ authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Modelling and automatic diff for constrained optimisation"
 keywords = ["optimisation", "automatic differentiation", "modelling", "ipopt"]
 categories = ["science"]
-license = "MIT OR APACHE-2.0"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+repository = "https://gitlab.com/pscott/descent"
 
 [dependencies]
 libc = "0.2"

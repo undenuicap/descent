@@ -45,4 +45,4 @@ expressions, split them up manually. In the future hope to automate this.
 
 ## License
 
-MIT
+Apache-2.0 or MIT
