@@ -2,10 +2,14 @@
 name = "descent"
 version = "0.1.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
+description = "Modelling and automatic diff for constrained optimisation"
+keywords = ["optimisation", "automatic differentiation", "modelling", "ipopt"]
+categories = ["science"]
+license = "MIT OR APACHE-2.0"
 
 [dependencies]
-libc = "0.2.32"
-fnv = "1.0.5"
+libc = "0.2"
+fnv = "1.0"
 
 [profile.release]
-debug = 2
+#debug = 2
