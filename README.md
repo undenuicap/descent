@@ -9,7 +9,8 @@ This is in an early state of development but is working / useable.
 ## Design
 
 It supports operator overloading for the ergonomic expression of terms and the
-operators: +, -, \*, powi, sin, cos.
+operators: +, -, \*, powi, sin, cos. It also allows parameterisation of values
+and easy solver warmstarting to enable quick model adjustments and resolving.
 
 It follows a similar design philosopy to the C++ / Python library
 [madopt](https://github.com/stanle/madopt). As they stand the AD routines are
@@ -22,7 +23,10 @@ The library could be expanded to link to other solvers.
 
 [Ipopt](https://projects.coin-or.org/Ipopt) (or
 [Bonmin](https://projects.coin-or.org/Bonmin)) must be separately installed
-before attempting to build as Descent links to libipopt.so shared library.
+before attempting to build as Descent links to the libipopt.so shared library.
+
+It has only been tested on linux, but presumably would also work on macos, and
+potentially on windows in the right environment.
 
 ## Example
 
