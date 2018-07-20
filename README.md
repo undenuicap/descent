@@ -26,7 +26,22 @@ before attempting to build as Descent links to libipopt.so shared library.
 
 ## Example
 
-Build and run the simple example problem:
+The following code shows and example of solving the following simple problem:
+min 2y s.t. y >= x*x - x, x in \[-10, 10\].
+
+```rust
+let mut m = IpoptModel::new();
+
+let x = m.add_var(-10.0, 10.0, 0.0);
+let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
+m.set_obj(2.0*y);
+m.add_con(y - x*x + x, 0.0, f64::INFINITY);
+
+let (stat, sol) = m.solve();
+```
+
+A full example of this with additional details is provided under
+examples/simple.rs, which can be built and run as follows:
 
 ```
 cargo build --release --example simple
