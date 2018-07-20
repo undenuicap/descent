@@ -396,6 +396,22 @@ impl Model for IpoptModel {
         self.model.obj = Objective { expr: expr, info: info };
     }
 
+    /// Set parameter to value
+    ///
+    /// Expect a panic if parameter not in model.
+    fn set_par(&mut self, par: Par, val: f64) {
+        let Par(id) = par;
+        self.model.pars[id].val = val;
+    }
+
+    /// Set variable initial value
+    ///
+    /// Expect a panic if variable not in model.
+    fn set_init(&mut self, var: Var, init: f64) {
+        let Var(id) = var;
+        self.model.vars[id].init = init;
+    }
+
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
         let sol = Solution::new();

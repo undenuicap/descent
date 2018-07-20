@@ -22,6 +22,8 @@ pub trait Model {
     fn add_par(&mut self, val: f64) -> Par;
     fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> Con;
     fn set_obj(&mut self, expr: Expr);
+    fn set_par(&mut self, par: Par, val: f64);
+    fn set_init(&mut self, var: Var, init: f64);
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>);
     fn warm_solve(&mut self, sol: Solution) ->
         (SolutionStatus, Option<Solution>);

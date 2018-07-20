@@ -50,7 +50,6 @@ pub struct Var(pub ID);
 #[derive(Debug, Clone, Copy)]
 pub struct Par(pub ID);
 
-
 /// Order second derivative pairs.
 ///
 /// Should fill out bottom left of Hessian with this ordering.
