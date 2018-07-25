@@ -1,8 +1,9 @@
 extern crate descent;
 
-use std::f64;
+use std::f64::{INFINITY as INF, NEG_INFINITY as NINF};
 use descent::ipopt_model::{IpoptModel};
 use descent::model::{Model};
+
 
 fn main() {
     // We want to solve the problem:
@@ -16,7 +17,7 @@ fn main() {
 
     // Create the variables with bounds and an initial value for the solver:
     let x = m.add_var(-10.0, 10.0, 0.0);
-    let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
+    let y = m.add_var(NINF, INF, 0.0);
 
     // A parameter is added (for illustration purposes), which can be used
     // to adjust the model without having to completely reconstruct the model.
@@ -34,7 +35,7 @@ fn main() {
     // to the same value if it is an equality constraint.
     //
     // Here x*x - x <= y becomes 0 <= y - x*x + x <= infinity:
-    m.add_con(y - x*x + x, 0.0, f64::INFINITY);
+    m.add_con(y - x*x + x, 0.0, INF);
 
     // Solve it:
     let (stat, sol) = m.solve();

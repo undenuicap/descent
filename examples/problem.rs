@@ -1,5 +1,6 @@
 extern crate descent;
 
+// NumOps trait required to be in scope to use cos and powi
 use descent::expr::{Expr, NumOps};
 use descent::ipopt_model::{IpoptModel};
 use descent::model::{Model};

@@ -37,9 +37,9 @@ min 2y s.t. y >= x*x - x, x in \[-10, 10\].
 let mut m = IpoptModel::new();
 
 let x = m.add_var(-10.0, 10.0, 0.0);
-let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
+let y = m.add_var(NINF, INF, 0.0);
 m.set_obj(2.0*y);
-m.add_con(y - x*x + x, 0.0, f64::INFINITY);
+m.add_con(y - x*x + x, 0.0, INF);
 
 let (stat, sol) = m.solve();
 ```

@@ -9,6 +9,6 @@
 #![feature(test)] // enable benchmarking
 
 pub mod expr;
-mod ipopt;
 pub mod model;
+mod ipopt;
 pub mod ipopt_model;

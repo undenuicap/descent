@@ -9,25 +9,26 @@
 use std;
 use std::collections::{HashSet, HashMap};
 
-pub type ID = usize;
+pub(crate) type ID = usize;
 
 /// Retrieve current values of variables and parameters.
 ///
 /// Expect a panic if requested id not available for whatever reason.
-pub trait Retrieve {
+pub(crate) trait Retrieve {
     fn get_var(&self, vid: ID) -> f64;
     fn get_par(&self, pid: ID) -> f64;
 }
 
 /// Storage for variable and parameter values.
 #[derive(Debug, Clone, Default)]
-pub struct Store {
-    pub vars: Vec<f64>,
-    pub pars: Vec<f64>,
+pub(crate) struct Store {
+    pub(crate) vars: Vec<f64>,
+    pub(crate) pars: Vec<f64>,
 }
 
 impl Store {
-    pub fn new() -> Self {
+    #[cfg(test)]
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 }
@@ -44,11 +45,11 @@ impl Retrieve for Store {
 
 /// Variable identifier.
 #[derive(Debug, Clone, Copy)]
-pub struct Var(pub ID);
+pub struct Var(pub(crate) ID);
 
 /// Parameter identifier.
 #[derive(Debug, Clone, Copy)]
-pub struct Par(pub ID);
+pub struct Par(pub(crate) ID);
 
 /// Order second derivative pairs.
 ///
@@ -74,7 +75,7 @@ fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>,
 /// - IDs in pairs must be ordered
 /// - all IDs in `quad` and `nquad` must be in `nlin`
 #[derive(Debug, PartialEq, Clone, Default)]
-pub struct Degree {
+struct Degree {
     lin: HashSet<ID>,
     nlin: HashSet<ID>,
     quad: HashSet<(ID, ID)>,
@@ -82,21 +83,21 @@ pub struct Degree {
 }
 
 impl Degree {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_id(id: ID) -> Degree {
+    fn with_id(id: ID) -> Degree {
         let mut d = Degree::default();
         d.lin.insert(id);
         d
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.lin.is_empty() && self.quad.is_empty() && self.nquad.is_empty()
     }
 
-    pub fn union(&self, other: &Degree) -> Degree {
+    fn union(&self, other: &Degree) -> Degree {
         let mut deg = Degree::new();
         deg.lin = self.lin.union(&(other.lin)).cloned().collect();
         deg.nlin = self.nlin.union(&(other.nlin)).cloned().collect();
@@ -109,7 +110,7 @@ impl Degree {
     }
 
     /// Cross all elements in degree.
-    pub fn cross(&self, other: &Degree) -> Degree {
+    fn cross(&self, other: &Degree) -> Degree {
         if self.is_empty() {
             other.clone()
         } else if other.is_empty() {
@@ -165,7 +166,7 @@ impl Degree {
     }
 
     /// Promote all combinations to highest degree.
-    pub fn highest(&self) -> Degree {
+    fn highest(&self) -> Degree {
         let mut deg = Degree::new();
 
         deg.nlin = self.lin.union(&(self.nlin)).cloned().collect();
@@ -241,14 +242,14 @@ enum Oper {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Column {
-    pub val: f64,
-    pub der1: Vec<f64>,
-    pub der2: Vec<f64>,
+pub(crate) struct Column {
+    pub(crate) val: f64,
+    pub(crate) der1: Vec<f64>,
+    pub(crate) der2: Vec<f64>,
 }
 
 impl Column {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 }
@@ -257,17 +258,18 @@ impl Column {
 ///
 /// Used to save on allocations with many repeated calls.
 #[derive(Debug, Clone, Default)]
-pub struct WorkSpace {
-    pub cols: Vec<Column>,
-    pub ns: Vec<f64>,
-    pub nds: Vec<f64>,
-    pub na1s: Vec<f64>,
-    pub na2s: Vec<f64>,
-    pub ids: HashMap<ID, f64>,
+pub(crate) struct WorkSpace {
+    pub(crate) cols: Vec<Column>,
+    pub(crate) ns: Vec<f64>,
+    pub(crate) nds: Vec<f64>,
+    pub(crate) na1s: Vec<f64>,
+    pub(crate) na2s: Vec<f64>,
+    pub(crate) ids: HashMap<ID, f64>,
 }
 
 impl WorkSpace {
-    pub fn new() -> Self {
+    #[cfg(test)]
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 }
@@ -280,17 +282,17 @@ impl WorkSpace {
 ///
 /// The contracts from `Degree` are expected to be held.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ExprInfo {
+pub(crate) struct ExprInfo {
     /// Constant first derivative
-    pub lin: Vec<ID>,
+    pub(crate) lin: Vec<ID>,
     /// Non-constant first derivative
-    pub nlin: Vec<ID>,
+    pub(crate) nlin: Vec<ID>,
     /// Constant second derivative
-    pub quad: Vec<(usize, usize)>,
+    pub(crate) quad: Vec<(usize, usize)>,
     /// Non-constant second derivative
-    pub nquad: Vec<(usize, usize)>,
-    pub quad_list: Vec<Vec<ID>>,
-    pub nquad_list: Vec<Vec<ID>>,
+    pub(crate) nquad: Vec<(usize, usize)>,
+    pub(crate) quad_list: Vec<Vec<ID>>,
+    pub(crate) nquad_list: Vec<Vec<ID>>,
 }
 
 ///// Only really care about this for second derivatives. Can just call reverse
@@ -310,6 +312,7 @@ pub struct ExprInfo {
 ///
 /// When everything is ordered, when traversed it will preserve original
 /// `quad`/`nquad` orderings.
+#[cfg(test)]
 fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>>{
     let mut vs = Vec::new();
     vs.resize(nlin.len(), Vec::new());
@@ -320,12 +323,13 @@ fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>>{
 }
 
 impl ExprInfo {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Needs to be called before using some of the AD techniques.
-    pub fn set_lists(&mut self) {
+    #[cfg(test)]
+    pub(crate) fn set_lists(&mut self) {
         self.quad_list = nlin_list(&self.nlin, &self.quad);
         self.nquad_list = nlin_list(&self.nlin, &self.nquad);
     }
@@ -360,7 +364,7 @@ pub struct Expr {
 
 impl Expr {
     /// Value of the expression.
-    pub fn eval(&self, ret: &Retrieve, ns: &mut Vec<f64>) -> f64 {
+    pub(crate) fn eval(&self, ret: &Retrieve, ns: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
         use self::{Var, Par};
         ns.resize(self.len(), 0.0);
@@ -410,7 +414,7 @@ impl Expr {
     /// ```text
     /// nd = \sum_{j in js} nd_j dn/dn_j
     /// ```
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
         use self::Var;
@@ -552,7 +556,7 @@ impl Expr {
     /// Once a terminal variable is reached, the second adjoint is combined
     /// with the second adjoint of the variable if it appears anywhere else in
     /// the expression
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn der2_rev(&self, dl2: &[ID], ns: &[f64], nds: &[f64],
                 na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
                 ids: &mut HashMap<ID, f64>) -> Vec<f64> {
@@ -844,7 +848,7 @@ impl Expr {
     /// Value, and derivatives using both forward and reverse method.
     ///
     /// `v1s` and `vl2s` must be same length.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn full_fwd_rev(&self, v1s: &[ID], vl2s: &[Vec<ID>],
                     ret: &Retrieve, ws: &mut WorkSpace) -> Column {
         let mut col = Column::new();
@@ -877,8 +881,8 @@ impl Expr {
     /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub fn auto_const(&self, info: &ExprInfo, store: &Retrieve,
-                     ws: &mut WorkSpace) -> Column {
+    pub(crate) fn auto_const(&self, info: &ExprInfo, store: &Retrieve,
+                             ws: &mut WorkSpace) -> Column {
         let mut col = Column::new();
         if !info.lin.is_empty() {
             self.eval(store, &mut ws.ns);
@@ -904,8 +908,8 @@ impl Expr {
     /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub fn auto_dynam(&self, info: &ExprInfo, store: &Retrieve,
-                      ws: &mut WorkSpace) -> Column {
+    pub(crate) fn auto_dynam(&self, info: &ExprInfo, store: &Retrieve,
+                             ws: &mut WorkSpace) -> Column {
         if info.nlin.is_empty() {
             let mut col = Column::new();
             col.val = self.eval(store, &mut ws.ns);
@@ -939,7 +943,7 @@ impl Expr {
     //}
 
     /// Get information about the expression.
-    pub fn get_info(&self) -> ExprInfo {
+    pub(crate) fn get_info(&self) -> ExprInfo {
         use self::Oper::*;
         use self::Var;
         let mut degs: Vec<Degree> = Vec::new();
@@ -979,7 +983,7 @@ impl Expr {
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.ops.len()
     }
 
