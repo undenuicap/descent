@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std;
+use std::ops::{Add, Mul, Sub};
 use std::collections::{HashSet, HashMap};
 
 pub(crate) type ID = usize;
@@ -1120,7 +1120,7 @@ impl NumOps for Par {
 
 macro_rules! binary_ops_to_expr {
     ( $T:ident, $f:ident, $U:ty, $V:ty ) => {
-        impl std::ops::$T<$V> for $U {
+        impl $T<$V> for $U {
             type Output = Expr;
 
             fn $f(self, other: $V) -> Expr {
@@ -1132,7 +1132,7 @@ macro_rules! binary_ops_to_expr {
 
 macro_rules! binary_ops_with_expr {
     ( $T:ident, $f:ident, $U:ty ) => {
-        impl std::ops::$T<Expr> for $U {
+        impl $T<Expr> for $U {
             type Output = Expr;
 
             fn $f(self, other: Expr) -> Expr {
@@ -1140,7 +1140,7 @@ macro_rules! binary_ops_with_expr {
             }
         }
 
-        impl std::ops::$T<$U> for Expr {
+        impl $T<$U> for Expr {
             type Output = Expr;
 
             fn $f(self, other: $U) -> Expr {
@@ -1148,7 +1148,7 @@ macro_rules! binary_ops_with_expr {
             }
         }
 
-        impl<'a> std::ops::$T<&'a Expr> for $U {
+        impl<'a> $T<&'a Expr> for $U {
             type Output = Expr;
 
             fn $f(self, other: &'a Expr) -> Expr {
@@ -1156,7 +1156,7 @@ macro_rules! binary_ops_with_expr {
             }
         }
 
-        impl<'a> std::ops::$T<$U> for &'a Expr {
+        impl<'a> $T<$U> for &'a Expr {
             type Output = Expr;
 
             fn $f(self, other: $U) -> Expr {
