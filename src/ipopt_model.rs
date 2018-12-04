@@ -57,6 +57,11 @@ struct ModelCache {
     obj_const: Column,
     cons: Vec<Column>,
     obj: Column,
+    //f_count: (usize, usize),
+    //f_grad_count: (usize, usize),
+    //g_count: (usize, usize),
+    //g_jac_count: (usize, usize),
+    //l_hess_count: (usize, usize),
 }
 
 // Make sure don't implement copy or clone for this otherwise risk of double
@@ -289,6 +294,13 @@ impl IpoptModel {
                                       cb_data_ptr)
                 };
             }
+            //println!("Counts: {:?} {:?} {:?} {:?} {:?}",
+            //         cache.f_count,
+            //         cache.f_grad_count,
+            //         cache.g_count,
+            //         cache.g_jac_count,
+            //         cache.l_hess_count
+            //         );
             // Should probably save ipopt_status to self
             use ipopt::ApplicationReturnStatus as ARS;
             use model::SolutionStatus as SS;
@@ -454,6 +466,15 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
     }
 }
 
+// Would be possibly to tune these functions by lazily calculating the bits
+// that are required for each new_x as they are requested. Would need to track
+// a state in the cache that gets reset each time a new_x is observed.
+// This could maybe save around 20% of jacobian and even more hessian calcs.
+// There will be a balance, as the evaluation sometimes calculate other values
+// as a by-product (e.g., the full_fwd call).
+// For example problem (non-sparsity function calls, those that had new_x):
+// f (99, 3) f_grad (73, 1) g (99, 95) g_grad (80, 1) l_hess (72, 0)
+
 extern fn f(
         n: ipopt::Index,
         x: *const ipopt::Number,
@@ -468,7 +489,9 @@ extern fn f(
         return 0;
     }
 
+    //cb_data.cache.f_count.0 += 1;
     if new_x == 1 {
+        //cb_data.cache.f_count.1 += 1;
         let store = Store {
             vars: unsafe { slice::from_raw_parts(x, n as usize) },
             pars: cb_data.pars,
@@ -497,7 +520,9 @@ extern fn f_grad(
         return 0;
     }
 
+    //cb_data.cache.f_grad_count.0 += 1;
     if new_x == 1 {
+        //cb_data.cache.f_grad_count.1 += 1;
         let store = Store {
             vars: unsafe { slice::from_raw_parts(x, n as usize) },
             pars: cb_data.pars,
@@ -555,7 +580,9 @@ extern fn g(
         return 0;
     }
 
+    //cb_data.cache.g_count.0 += 1;
     if new_x == 1 {
+        //cb_data.cache.g_count.1 += 1;
         let store = Store {
             vars: unsafe { slice::from_raw_parts(x, n as usize) },
             pars: cb_data.pars,
@@ -611,7 +638,9 @@ extern fn g_jac(
         }
     } else {
         // Set values
+        //cb_data.cache.g_jac_count.0 += 1;
         if new_x == 1 {
+            //cb_data.cache.g_jac_count.1 += 1;
             let store = Store {
                 vars: unsafe { slice::from_raw_parts(x, n as usize) },
                 pars: cb_data.pars,
@@ -683,7 +712,9 @@ extern fn l_hess(
         }
     } else {
         // Set values
+        //cb_data.cache.l_hess_count.0 += 1;
         if new_x == 1 {
+            //cb_data.cache.l_hess_count.1 += 1;
             let store = Store {
                 vars: unsafe { slice::from_raw_parts(x, n as usize) },
                 pars: cb_data.pars,
