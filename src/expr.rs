@@ -63,6 +63,25 @@ pub struct Var(pub ID);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Par(pub ID);
 
+// Could provide a separate calculation for constant entries, or at the minimum
+// indicate if the entire first or second derivative is constant. If have
+// one mega-function then might not be much benefit to keeping track if
+// something is constant or not.
+
+/// "Static" expression with pointers to functions to evaluated the expression
+/// and its first and second derivatives.
+///
+/// The input variable / parameter slices to these functions should be large
+/// enough to include the indices of the vars / pars for the expression.
+pub struct ExprStatic {
+    pub f: Box<Fn(&[f64], &[f64]) -> f64>,
+    pub d1: Box<Fn(&[f64], &[f64], &mut[f64])>,
+    pub d2: Box<Fn(&[f64], &[f64], &mut[f64])>,
+    pub all: Box<Fn(&[f64], &[f64], &mut[f64], &mut[f64]) -> f64>,
+    pub d1_sparsity: Vec<Var>, // sparsity / order for d1 output
+    pub d2_sparsity: Vec<(Var, Var)>, // sparsity / order for d2 output
+}
+
 /// Order second derivative pairs.
 ///
 /// Should fill out bottom left of Hessian with this ordering.

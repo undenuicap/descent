@@ -473,6 +473,10 @@ pub fn expr(input: TokenStream) -> TokenStream {
                 d2_nz.push((k1.clone(), k2.clone()));
             }
         }
+        // All first derivatives should typically be non-zero unless variable
+        // doesn't appear in expression or cancels out, e.g., x - x.
+        // Not simplifying the original expression so variable might be
+        // required there but then has zero first derivative.
         if !ex1.is_zero() {
             body1.extend(TokenStream::from_str(&format!("__d1[{}] = ", d1_nz.len())).unwrap().into_iter());
             ex1.into_tokens(&mut body1);
@@ -527,20 +531,20 @@ pub fn expr(input: TokenStream) -> TokenStream {
 
     // final returned tokens
     let mut body = Vec::new();
-    body.extend(TokenStream::from_str("f: ").unwrap().into_iter());
-    body.extend(f_clo.into_iter());
+    body.extend(TokenStream::from_str("f: Box::new").unwrap().into_iter());
+    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, f_clo.into_iter().collect())));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
-    body.extend(TokenStream::from_str("d1: ").unwrap().into_iter());
-    body.extend(d1_clo.into_iter());
+    body.extend(TokenStream::from_str("d1: Box::new").unwrap().into_iter());
+    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, d1_clo.into_iter().collect())));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
-    body.extend(TokenStream::from_str("d2: ").unwrap().into_iter());
-    body.extend(d2_clo.into_iter());
+    body.extend(TokenStream::from_str("d2: Box::new").unwrap().into_iter());
+    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, d2_clo.into_iter().collect())));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
-    body.extend(TokenStream::from_str("all: ").unwrap().into_iter());
-    body.extend(all_clo.into_iter());
+    body.extend(TokenStream::from_str("all: Box::new").unwrap().into_iter());
+    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, all_clo.into_iter().collect())));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     body.extend(TokenStream::from_str("d1_sparsity: ").unwrap().into_iter());
@@ -571,7 +575,7 @@ pub fn expr(input: TokenStream) -> TokenStream {
             structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
         }
     }
-    structure.extend(TokenStream::from_str("ExprStatic").unwrap().into_iter());
+    structure.extend(TokenStream::from_str("descent::expr::ExprStatic").unwrap().into_iter());
     structure.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
 
     let mut ret = Vec::new();
