@@ -2,7 +2,6 @@
 
 extern crate proc_macro;
 use crate::proc_macro::*;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::FromStr;
@@ -26,11 +25,10 @@ fn separate_on_punct<I: IntoIterator<Item = TokenTree>>(input: I, pchar: char) -
     split
 }
 
-type IdenMap = HashMap<String, (usize, Option<Vec<TokenTree>>)>;
+type IdenVec = Vec<(String, Option<Vec<TokenTree>>)>;
 
-fn prepare_ident_map<I: IntoIterator<Item = TokenTree>>(input: Vec<I>) -> IdenMap {
-    let mut map = HashMap::new();
-    let mut i = 0;
+fn prepare_idents<I: IntoIterator<Item = TokenTree>>(input: Vec<I>) -> IdenVec {
+    let mut vec = Vec::new();
     for entry in input {
         let mut split = separate_on_punct(entry, '=');
         // Split is never empty at top level, check one step down
@@ -45,14 +43,9 @@ fn prepare_ident_map<I: IntoIterator<Item = TokenTree>>(input: Vec<I>) -> IdenMa
             [TokenTree::Ident(ident)] => ident.to_string(),
             _ => panic!("Expected ident = expr for variables and parameters"),
         };
-
-        if map.contains_key(&key) {
-            panic!("Variable / parameter identifier assigned twice");
-        }
-        map.insert(key, (i, rhs));
-        i += 1;
+        vec.push((key, rhs));
     }
-    map
+    vec 
 }
 
 #[derive(Debug)]
@@ -331,13 +324,16 @@ fn get_const_tokens<I: Iterator<Item = TokenTree>>(first: TokenTree, iter: &mut 
     ExprToken::Tokens(tokens)
 }
 
-fn get_expr<I: Iterator<Item = TokenTree>>(left: Option<&ExprToken>, mut iter: &mut Peekable<I>, vars: &IdenMap, pars: &IdenMap) -> Option<ExprToken> {
+fn get_expr<I: Iterator<Item = TokenTree>>(left: Option<&ExprToken>,
+                                           mut iter: &mut Peekable<I>,
+                                           vars: &HashSet<String>,
+                                           pars: &HashSet<String>) -> Option<ExprToken> {
     match iter.next() {
         Some(TokenTree::Ident(ident)) => {
             let id = ident.to_string();
-            if vars.contains_key(id.as_str()) {
+            if vars.contains(id.as_str()) {
                 Some(ExprToken::Var(id))
-            } else if pars.contains_key(id.as_str()) {
+            } else if pars.contains(id.as_str()) {
                 Some(ExprToken::Par(id))
             } else {
                 Some(get_const_tokens(TokenTree::Ident(ident), &mut iter))
@@ -380,7 +376,9 @@ fn get_expr<I: Iterator<Item = TokenTree>>(left: Option<&ExprToken>, mut iter: &
     }
 }
 
-fn to_expr_stream<I: Iterator<Item = TokenTree>>(mut iter: &mut Peekable<I>, vars: &IdenMap, pars: &IdenMap) -> Vec<ExprToken> {
+fn to_expr_stream<I: Iterator<Item = TokenTree>>(mut iter: &mut Peekable<I>,
+                                                 vars: &HashSet<String>,
+                                                 pars: &HashSet<String>) -> Vec<ExprToken> {
     let mut expr_stream = Vec::new();
     while let Some(expr) = get_expr(expr_stream.last(), &mut iter, vars, pars) {
         expr_stream.push(expr);
@@ -419,47 +417,113 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 // expr!(x[i] * other.get_var() + 5.0 * (param + 1.0) + c; x[i], other.get_var(); param);
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
-    let invalid_ident = ["__v", "__p", "__out"].iter().cloned().collect();
+    let invalid_ident = ["__v", "__p", "__d1", "__d2"].iter().cloned().collect();
     if contains_ident(input.clone(), &invalid_ident) {
         panic!("Cannot use any of {:?} as identifier", invalid_ident);
     }
+
     let mut split = separate_on_punct(input, ';');
     if split.len() != 3 {
         panic!("Expected two semicolons in input");
     }
-    let p = prepare_ident_map(separate_on_punct(split.pop().unwrap(), ','));
-    let v = prepare_ident_map(separate_on_punct(split.pop().unwrap(), ','));
-    for key in p.keys() {
-        if v.contains_key(key) {
+
+    let p = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
+    let v = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
+    let mut v_set = HashSet::new();
+    let mut p_set = HashSet::new();
+    for (k, _) in &v {
+        if v_set.contains(k) {
+            panic!("Variable identifier cannot be used twice");
+        }
+        v_set.insert(k.clone());
+    }
+    for (k, _) in &p {
+        if p_set.contains(k) {
+            panic!("Parameter identifier cannot be used twice");
+        }
+        p_set.insert(k.clone());
+    }
+    for k in &p_set {
+        if v_set.contains(k) {
             panic!("Cannot use same identifier for parameter and variable");
         }
     }
+
     let e = split.pop().unwrap();
 
-    let e_stream = to_expr_stream(&mut e.into_iter().peekable(), &v, &p);
+    let e_stream = to_expr_stream(&mut e.into_iter().peekable(), &v_set, &p_set);
     let expr = tokens_to_expr(&mut e_stream.into_iter().peekable(), None);
+
+    // all combined body
+    let mut all_body = Vec::new();
+
+    // d1 & d2 closure
+    let mut body1 = Vec::new();
+    let mut body2 = Vec::new();
+    let mut d1_nz = Vec::new();
+    let mut d2_nz = Vec::new();
+    for (i, (k1, _)) in v.iter().enumerate() {
+        let ex1 = deriv1(&expr, k1);
+        for (k2, _) in v.iter().skip(i) {
+            let ex2 = deriv1(&ex1, k2);
+            if !ex2.is_zero() {
+                body2.extend(TokenStream::from_str(&format!("__d2[{}] = ", d2_nz.len())).unwrap().into_iter());
+                ex2.into_tokens(&mut body2);
+                body2.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
+                d2_nz.push((k1.clone(), k2.clone()));
+            }
+        }
+        if !ex1.is_zero() {
+            body1.extend(TokenStream::from_str(&format!("__d1[{}] = ", d1_nz.len())).unwrap().into_iter());
+            ex1.into_tokens(&mut body1);
+            body1.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
+            d1_nz.push(k1.clone());
+        }
+    }
+
+    all_body.extend(body1.clone().into_iter());
+    all_body.extend(body2.clone().into_iter());
+
+    let mut d1_clo = Vec::new();
+    d1_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64]|").unwrap().into_iter());
+    d1_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body1.into_iter().collect())));
+
+    let mut body = Vec::new();
+    for k in &d1_nz {
+        body.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
+        body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+    }
+    let mut d1_spar = Vec::new();
+    d1_spar.extend(TokenStream::from_str("vec!").unwrap().into_iter());
+    d1_spar.push(TokenTree::Group(Group::new(Delimiter::Bracket, body.into_iter().collect())));
+
+    let mut d2_clo = Vec::new();
+    d2_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d2: &mut[f64]|").unwrap().into_iter());
+    d2_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body2.into_iter().collect())));
+
+    let mut body = Vec::new();
+    for (k1, k2) in &d2_nz {
+        body.extend(TokenStream::from_str(&format!("({}, {})", &k1, &k2)).unwrap().into_iter());
+        body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+    }
+    let mut d2_spar = Vec::new();
+    d2_spar.extend(TokenStream::from_str("vec!").unwrap().into_iter());
+    d2_spar.push(TokenTree::Group(Group::new(Delimiter::Bracket, body.into_iter().collect())));
 
     // f closure
     let mut body = Vec::new();
     expr.clone().into_tokens(&mut body);
 
+    all_body.extend(body.clone().into_iter());
+
     let mut f_clo = Vec::new();
     f_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64]|").unwrap().into_iter());
     f_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
 
-    // d1 closure
-    let mut body = Vec::new();
-    for (k, (id, _)) in &v {
-        body.extend(TokenStream::from_str(&format!("__out[{}] = ", *id)).unwrap().into_iter());
-        deriv1(&expr, k).into_tokens(&mut body);
-        body.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
-    }
-
-    let mut d1_clo = Vec::new();
-    d1_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __out: &mut[f64]|").unwrap().into_iter());
-    d1_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
-
-    //let mut d1_spar = Vec::new();
+    // all closure
+    let mut all_clo = Vec::new();
+    all_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64], __d2: &mut[f64]|").unwrap().into_iter());
+    all_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, all_body.into_iter().collect())));
 
     // final returned tokens
     let mut body = Vec::new();
@@ -471,13 +535,25 @@ pub fn expr(input: TokenStream) -> TokenStream {
     body.extend(d1_clo.into_iter());
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
-    //body.extend(TokenStream::from_str("d1_sparsity: ").unwrap().into_iter());
-    //body.extend(d1_spar.into_iter());
-    //body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+    body.extend(TokenStream::from_str("d2: ").unwrap().into_iter());
+    body.extend(d2_clo.into_iter());
+    body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+
+    body.extend(TokenStream::from_str("all: ").unwrap().into_iter());
+    body.extend(all_clo.into_iter());
+    body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+
+    body.extend(TokenStream::from_str("d1_sparsity: ").unwrap().into_iter());
+    body.extend(d1_spar.into_iter());
+    body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
+
+    body.extend(TokenStream::from_str("d2_sparsity: ").unwrap().into_iter());
+    body.extend(d2_spar.into_iter());
+    body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     let mut structure = Vec::new();
     // insert local lets
-    for (k, (_, rhs)) in v {
+    for (k, rhs) in v {
         if let Some(t) = rhs {
             structure.push(TokenTree::Ident(Ident::new("let", Span::call_site())));
             structure.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
@@ -486,7 +562,7 @@ pub fn expr(input: TokenStream) -> TokenStream {
             structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
         }
     }
-    for (k, (_, rhs)) in p {
+    for (k, rhs) in p {
         if let Some(t) = rhs {
             structure.push(TokenTree::Ident(Ident::new("let", Span::call_site())));
             structure.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
@@ -495,7 +571,7 @@ pub fn expr(input: TokenStream) -> TokenStream {
             structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
         }
     }
-    structure.extend(TokenStream::from_str("ExprFuncs").unwrap().into_iter());
+    structure.extend(TokenStream::from_str("ExprStatic").unwrap().into_iter());
     structure.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
 
     let mut ret = Vec::new();

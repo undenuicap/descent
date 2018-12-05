@@ -56,11 +56,11 @@ impl Retrieve for Store {
 }
 
 /// Variable identifier.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Var(pub ID);
 
 /// Parameter identifier.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Par(pub ID);
 
 /// Order second derivative pairs.

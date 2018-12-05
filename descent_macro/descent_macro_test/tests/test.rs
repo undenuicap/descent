@@ -3,56 +3,46 @@
 use descent_macro::expr;
 use descent::expr::{Var, Store};
 
-// Hrmm either need to pass through v and p to closures, or could capture them
-// directly if simple identify and then do a x.0 to directly embed value in
-// closure (Var and Par get copied in).
-// I think on implementation this is basically the same as closures get impl
-// as a struct, but good side is don't have to have extra array to v and p to
-// index into for the second case (but might capture too much if not using a
-// basic ident (work around with something like let x = xs[i] outside;).
-// Actually these lets are not so bad, should perhaps remove x = x[i] syntax as
-// part of macro... Or actually could implement this inside a block internally!
+// Could wrap 3 lambdas into one big function. Compilier might be able to
+// optimise some common instructions.
+// Might just want the 2 functions: f and combined.
 
-//struct ExprExpr {
-//    f: F: Rc<Fn(&[f64], &[f64]) -> f64>,
-//    d1: D1: Rc<Fn(&[f64], &[f64], &mut[f64])>,
-//    v: Vec<Var>,
-//    p: Vec<Par>,
-//}
-//
-//// Enable constructing multiple from generator
-//struct ExprGenerator {
-//    f: F: Rc<Fn(&[f64], &[f64]) -> f64>,
-//    d1: D1: Rc<Fn(&[f64], &[f64], &mut[f64])>,
-//}
-//
-//impl ExprGenerator {
-//    fn bind(&self, v: Vec<Var>, p: Vec<Par>) -> ExprExpr {
-//        ExprExpr { f: self.f.clone(), d1: self.d1.clone(), v, p }
-//    }
-//}
+// Provide a separate calculation for constant entries, or at the minimum
+// indicate if the entire first or second derivative is constant. If have
+// one mega-function then might not be much benefit to keeping track if
+// something is constant or not.
 
 // Could either have one struct with boxed closures, or distinct type for
 // each expression and trait to interface. Second can potentially avoid some
-// dereferencing...
+// dereferencing... If have single mega-function then probably best to box
+// instead as possible benfit is reduced.
 
-struct ExprFuncs<F, D1>
+struct ExprStatic<F, D1, D2, A>
 where F: Fn(&[f64], &[f64]) -> f64,
       D1: Fn(&[f64], &[f64], &mut[f64]),
+      D2: Fn(&[f64], &[f64], &mut[f64]),
+      A: Fn(&[f64], &[f64], &mut[f64], &mut[f64]) -> f64,
 {
     f: F,
     d1: D1,
-    //d1_sparsity: Vec<Var>,
+    d2: D2,
+    all: A,
+    d1_sparsity: Vec<Var>,
+    d2_sparsity: Vec<(Var, Var)>,
 }
 
 trait Usable {
     fn eval(&self, v: &[f64], p: &[f64]) -> f64;
     fn deriv1(&self, v: &[f64], p: &[f64], d: &mut[f64]);
+    fn deriv2(&self, v: &[f64], p: &[f64], d: &mut[f64]);
+    fn combined(&self, v: &[f64], p: &[f64], d1: &mut[f64], d2: &mut[f64]) -> f64;
 }
 
-impl<F, D1> Usable for ExprFuncs<F, D1>
+impl<F, D1, D2, A> Usable for ExprStatic<F, D1, D2, A>
 where F: Fn(&[f64], &[f64]) -> f64,
       D1: Fn(&[f64], &[f64], &mut[f64]),
+      D2: Fn(&[f64], &[f64], &mut[f64]),
+      A: Fn(&[f64], &[f64], &mut[f64], &mut[f64]) -> f64,
 {
     fn eval(&self, v: &[f64], p: &[f64]) -> f64 {
         (self.f)(v, p)
@@ -60,6 +50,14 @@ where F: Fn(&[f64], &[f64]) -> f64,
 
     fn deriv1(&self, v: &[f64], p: &[f64], d: &mut[f64]) {
         (self.d1)(v, p, d);
+    }
+
+    fn deriv2(&self, v: &[f64], p: &[f64], d: &mut[f64]) {
+        (self.d2)(v, p, d);
+    }
+
+    fn combined(&self, v: &[f64], p: &[f64], d1: &mut[f64], d2: &mut[f64]) -> f64 {
+        (self.all)(v, p, d1, d2)
     }
 }
 
@@ -73,21 +71,36 @@ fn it_works() {
     let k = s.add_par(20.0);
 
     let vars = vec![x, y];
-    let _v = expr!(x - y * b; x = vars[0], y = vars[1];);
+    let ex = expr!(x - y * b; x = vars[1], y = vars[0];); // switching vars
+    assert!(ex.d1_sparsity[0] == y);
+    assert!(ex.d1_sparsity[1] == x);
 
     let ex = expr!((x * x - y) * b + k; x, y; k);
 
+    assert!(ex.eval(s.vars.as_slice(), s.pars.as_slice()) == -20.0);
+
     let mut d1_out = vec![0.0, 0.0];
 
-    assert!(ex.eval(s.vars.as_slice(), s.pars.as_slice()) == -20.0);
     ex.deriv1(s.vars.as_slice(), s.pars.as_slice(), &mut d1_out);
     assert!(d1_out[0] == 20.0);
     assert!(d1_out[1] == -10.0);
+    assert!(ex.d1_sparsity.len() == 2);
+    assert!(ex.d1_sparsity[0] == x);
+    assert!(ex.d1_sparsity[1] == y);
 
-    //let gen = expr_gen!(y + t + k * 50.0; y, t; k);
-    //let mut cons = Vec::new();
-    //cons.push(gen.bind(vec![y[0], s[0]], vec![p[0]]));
-    //cons.push(gen.bind(vec![y[1], s[1]], vec![p[1]]));
-    //cons.push(gen.bind(vec![y[2], s[2]], vec![p[2]]));
-    //cons.push(gen.bind(vec![y[3], s[3]], vec![p[3]]));
+    let mut d2_out = vec![0.0];
+
+    ex.deriv2(s.vars.as_slice(), s.pars.as_slice(), &mut d2_out);
+    assert!(d2_out[0] == 20.0);
+    assert!(ex.d2_sparsity.len() == 1);
+    assert!(ex.d2_sparsity[0] == (x, x));
+
+    let mut d1_out = vec![0.0, 0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = ex.combined(s.vars.as_slice(), s.pars.as_slice(), &mut d1_out, &mut d2_out);
+    assert!(v == -20.0);
+    assert!(d1_out[0] == 20.0);
+    assert!(d1_out[1] == -10.0);
+    assert!(d2_out[0] == 20.0);
 }
