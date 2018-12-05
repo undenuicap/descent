@@ -444,12 +444,12 @@ struct Store<'a> {
 }
 
 impl<'a> Retrieve for Store<'a> {
-    fn get_var(&self, vid: ID) -> f64 {
-        self.vars[vid]
+    fn var(&self, v: Var) -> f64 {
+        self.vars[v.0]
     }
 
-    fn get_par(&self, pid: ID) -> f64 {
-        self.pars[pid]
+    fn par(&self, p: Par) -> f64 {
+        self.pars[p.0]
     }
 }
 

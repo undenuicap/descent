@@ -62,8 +62,8 @@ impl Solution {
         expr.eval(&self.store, &mut ns)
     }
 
-    pub fn var(&self, Var(id): Var) -> f64 {
-        self.store.get_var(id)
+    pub fn var(&self, v: Var) -> f64 {
+        self.store.var(v)
     }
 
     pub fn con_mult(&self, Con(cid): Con) -> f64 {

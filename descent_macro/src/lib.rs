@@ -57,8 +57,8 @@ fn prepare_ident_map<I: IntoIterator<Item = TokenTree>>(input: Vec<I>) -> IdenMa
 
 #[derive(Debug)]
 enum ExprToken {
-    Var(usize),
-    Par(usize),
+    Var(String),
+    Par(String),
     Tokens(Vec<TokenTree>), // everything must be constant beyond here
     Group(Vec<ExprToken>),
     Add,
@@ -86,8 +86,8 @@ impl ExprToken {
 
 #[derive(Debug, Clone)]
 enum Expr {
-    Var(usize),
-    Par(usize),
+    Var(String),
+    Par(String),
     Const(f64),
     Tokens(Vec<TokenTree>), // everything must be constant beyond here
     Add(Box<Expr>, Box<Expr>),
@@ -125,19 +125,26 @@ impl Expr {
     fn into_tokens(self, mut tokens: &mut Vec<TokenTree>) {
         // could directly call add, sub, etc instead of operators...
         match self {
-            Expr::Var(i) => {
-                //tokens.push(TokenTree::Ident(Ident::new(&format!("variable{}", i), Span::call_site())));
-                tokens.push(TokenTree::Ident(Ident::new("__v", Span::call_site())));
-                let mut child = Vec::new();
-                child.push(TokenTree::Literal(Literal::usize_suffixed(i)));
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Bracket, child.into_iter().collect())));
+            // doing a iden.0 to get usize from Var or Par
+            Expr::Var(iden) => {
+                tokens.extend(TokenStream::from_str(&format!("__v[{}.0]", iden)).unwrap().into_iter());
+                //tokens.push(TokenTree::Ident(Ident::new("__v", Span::call_site())));
+                //let mut child = Vec::new();
+                ////child.push(TokenTree::Literal(Literal::usize_suffixed(i)));
+                //child.push(TokenTree::Ident(Ident::new(&iden, Span::call_site())));
+                //child.push(TokenTree::Punct(Punct::new('.', Spacing::Alone)));
+                //child.push(TokenTree::Literal(Literal::usize_unsuffixed(0)));
+                //tokens.push(TokenTree::Group(Group::new(Delimiter::Bracket, child.into_iter().collect())));
             },
-            Expr::Par(i) => {
-                //tokens.push(TokenTree::Ident(Ident::new(&format!("parameter{}", i), Span::call_site())));
-                tokens.push(TokenTree::Ident(Ident::new("__p", Span::call_site())));
-                let mut child = Vec::new();
-                child.push(TokenTree::Literal(Literal::usize_suffixed(i)));
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Bracket, child.into_iter().collect())));
+            Expr::Par(iden) => {
+                tokens.extend(TokenStream::from_str(&format!("__p[{}.0]", iden)).unwrap().into_iter());
+                //tokens.push(TokenTree::Ident(Ident::new("__p", Span::call_site())));
+                //let mut child = Vec::new();
+                ////child.push(TokenTree::Literal(Literal::usize_suffixed(i)));
+                //child.push(TokenTree::Ident(Ident::new(&iden, Span::call_site())));
+                //child.push(TokenTree::Punct(Punct::new('.', Spacing::Alone)));
+                //child.push(TokenTree::Literal(Literal::usize_unsuffixed(0)));
+                //tokens.push(TokenTree::Group(Group::new(Delimiter::Bracket, child.into_iter().collect())));
             },
             Expr::Const(v) => {
                 tokens.push(TokenTree::Literal(Literal::f64_suffixed(v)));
@@ -239,10 +246,10 @@ fn simplify(expr: Expr) -> Expr {
     }
 }
 
-fn deriv1(expr: &Expr, vid: usize) -> Expr {
+fn deriv1(expr: &Expr, vid: &str) -> Expr {
     simplify(match expr {
-        Expr::Var(i) => {
-            if *i == vid {
+        Expr::Var(iden) => {
+            if *iden == vid {
                 Expr::Const(1.0)
             } else {
                 Expr::Const(0.0)
@@ -327,10 +334,11 @@ fn get_const_tokens<I: Iterator<Item = TokenTree>>(first: TokenTree, iter: &mut 
 fn get_expr<I: Iterator<Item = TokenTree>>(left: Option<&ExprToken>, mut iter: &mut Peekable<I>, vars: &IdenMap, pars: &IdenMap) -> Option<ExprToken> {
     match iter.next() {
         Some(TokenTree::Ident(ident)) => {
-            if let Some((i, _)) = vars.get(&ident.to_string()) {
-                Some(ExprToken::Var(*i))
-            } else if let Some((i, _)) = pars.get(&ident.to_string()) {
-                Some(ExprToken::Par(*i))
+            let id = ident.to_string();
+            if vars.contains_key(id.as_str()) {
+                Some(ExprToken::Var(id))
+            } else if pars.contains_key(id.as_str()) {
+                Some(ExprToken::Par(id))
             } else {
                 Some(get_const_tokens(TokenTree::Ident(ident), &mut iter))
             }
@@ -441,9 +449,9 @@ pub fn expr(input: TokenStream) -> TokenStream {
 
     // d1 closure
     let mut body = Vec::new();
-    for (_, (id, _)) in &v {
+    for (k, (id, _)) in &v {
         body.extend(TokenStream::from_str(&format!("__out[{}] = ", *id)).unwrap().into_iter());
-        deriv1(&expr, *id).into_tokens(&mut body);
+        deriv1(&expr, k).into_tokens(&mut body);
         body.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
     }
 

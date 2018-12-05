@@ -1,8 +1,7 @@
 #![feature(proc_macro_hygiene)]
 
 use descent_macro::expr;
-use descent::expr::Var;
-use descent::expr::Par;
+use descent::expr::{Var, Store};
 
 // Hrmm either need to pass through v and p to closures, or could capture them
 // directly if simple identify and then do a x.0 to directly embed value in
@@ -68,22 +67,20 @@ where F: Fn(&[f64], &[f64]) -> f64,
 fn it_works() {
     let b = 10.0;
 
-    // Not binding yet
-    let vars = vec![1, 2];
+    let mut s = Store::new();
+    let x = s.add_var(1.0);
+    let y = s.add_var(5.0);
+    let k = s.add_par(20.0);
+
+    let vars = vec![x, y];
     let _v = expr!(x - y * b; x = vars[0], y = vars[1];);
 
     let ex = expr!((x * x - y) * b + k; x, y; k);
 
-    let vars = &[1.0, 5.0];
-    let pars = &[20.0];
     let mut d1_out = vec![0.0, 0.0];
-    assert!((ex.f)(vars, pars) == -20.0);
-    (ex.d1)(vars, pars, &mut d1_out);
-    assert!(d1_out[0] == 20.0);
-    assert!(d1_out[1] == -10.0);
 
-    assert!(ex.eval(vars, pars) == -20.0);
-    ex.deriv1(vars, pars, &mut d1_out);
+    assert!(ex.eval(s.vars.as_slice(), s.pars.as_slice()) == -20.0);
+    ex.deriv1(s.vars.as_slice(), s.pars.as_slice(), &mut d1_out);
     assert!(d1_out[0] == 20.0);
     assert!(d1_out[1] == -10.0);
 

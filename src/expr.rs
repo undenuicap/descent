@@ -9,47 +9,59 @@
 use std::ops::{Add, Mul, Sub};
 use std::collections::{HashSet, HashMap};
 
-pub(crate) type ID = usize;
+pub type ID = usize;
 
 /// Retrieve current values of variables and parameters.
 ///
 /// Expect a panic if requested id not available for whatever reason.
-pub(crate) trait Retrieve {
-    fn get_var(&self, vid: ID) -> f64;
-    fn get_par(&self, pid: ID) -> f64;
+pub trait Retrieve {
+    fn var(&self, v: Var) -> f64;
+    fn par(&self, p: Par) -> f64;
 }
 
 /// Storage for variable and parameter values.
+/// Used for testing here and externally.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Store {
-    pub(crate) vars: Vec<f64>,
-    pub(crate) pars: Vec<f64>,
+pub struct Store {
+    pub vars: Vec<f64>,
+    pub pars: Vec<f64>,
 }
 
 impl Store {
-    #[cfg(test)]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn add_var(&mut self, value: f64) -> Var {
+        let id = self.vars.len();
+        self.vars.push(value);
+        Var(id)
+    }
+
+    pub fn add_par(&mut self, value: f64) -> Par {
+        let id = self.pars.len();
+        self.pars.push(value);
+        Par(id)
     }
 }
 
 impl Retrieve for Store {
-    fn get_var(&self, vid: ID) -> f64 {
-        self.vars[vid]
+    fn var(&self, v: Var) -> f64 {
+        self.vars[v.0]
     }
 
-    fn get_par(&self, pid: ID) -> f64 {
-        self.pars[pid]
+    fn par(&self, p: Par) -> f64 {
+        self.pars[p.0]
     }
 }
 
 /// Variable identifier.
 #[derive(Debug, Clone, Copy)]
-pub struct Var(pub(crate) ID);
+pub struct Var(pub ID);
 
 /// Parameter identifier.
 #[derive(Debug, Clone, Copy)]
-pub struct Par(pub(crate) ID);
+pub struct Par(pub ID);
 
 /// Order second derivative pairs.
 ///
@@ -364,9 +376,10 @@ pub struct Expr {
 
 impl Expr {
     /// Value of the expression.
-    pub(crate) fn eval(&self, ret: &Retrieve, ns: &mut Vec<f64>) -> f64 {
+    pub(crate) fn eval<R>(&self, ret: &R, ns: &mut Vec<f64>) -> f64
+    where R: Retrieve,
+    {
         use self::Oper::*;
-        use self::{Var, Par};
         ns.resize(self.len(), 0.0);
         // Get values
         for (i, op) in self.ops.iter().enumerate() {
@@ -387,8 +400,8 @@ impl Expr {
                     }
                 }
                 Square => *cur = left[i - 1]*left[i - 1],
-                Variable(Var(id)) => *cur = ret.get_var(id),
-                Parameter(Par(id)) => *cur = ret.get_par(id),
+                Variable(v) => *cur = ret.var(v),
+                Parameter(p) => *cur = ret.par(p),
                 Float(val) => *cur = val,
             }
         }
@@ -649,9 +662,11 @@ impl Expr {
     }
 
     /// Value, and derivatives using forward method.
-    fn full_fwd<'a>(&self, v1s: &[ID], v2s: &[(usize, usize)],
-                    ret: &Retrieve,
-                    cols: &'a mut Vec<Column>) -> &'a Column {
+    fn full_fwd<'a, R>(&self, v1s: &[ID], v2s: &[(usize, usize)],
+                    ret: &R,
+                    cols: &'a mut Vec<Column>) -> &'a Column 
+    where R: Retrieve,
+    {
         use self::Oper::*;
         use self::{Var, Par};
         // Only resize up
@@ -814,7 +829,7 @@ impl Expr {
                     }
                 }
                 Variable(Var(id)) => {
-                    cur.val = ret.get_var(id);
+                    cur.val = ret.var(Var(id));
                     for (c, did) in cur.der1.iter_mut().zip(v1s.iter()) {
                         *c = if id == *did { 1.0 } else { 0.0 };
                     }
@@ -823,7 +838,7 @@ impl Expr {
                     }
                 }
                 Parameter(Par(id)) => {
-                    cur.val = ret.get_par(id);
+                    cur.val = ret.par(Par(id));
                     for c in &mut cur.der1 {
                         *c = 0.0;
                     }
@@ -849,8 +864,10 @@ impl Expr {
     ///
     /// `v1s` and `vl2s` must be same length.
     #[cfg(test)]
-    fn full_fwd_rev(&self, v1s: &[ID], vl2s: &[Vec<ID>],
-                    ret: &Retrieve, ws: &mut WorkSpace) -> Column {
+    fn full_fwd_rev<R>(&self, v1s: &[ID], vl2s: &[Vec<ID>],
+                    ret: &R, ws: &mut WorkSpace) -> Column
+    where R: Retrieve,
+    {
         let mut col = Column::new();
 
         col.val = self.eval(ret, &mut ws.ns);
@@ -881,8 +898,10 @@ impl Expr {
     /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub(crate) fn auto_const(&self, info: &ExprInfo, store: &Retrieve,
-                             ws: &mut WorkSpace) -> Column {
+    pub(crate) fn auto_const<R>(&self, info: &ExprInfo, store: &R,
+                             ws: &mut WorkSpace) -> Column
+    where R: Retrieve,
+    {
         let mut col = Column::new();
         if !info.lin.is_empty() {
             self.eval(store, &mut ws.ns);
@@ -908,8 +927,10 @@ impl Expr {
     /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub(crate) fn auto_dynam(&self, info: &ExprInfo, store: &Retrieve,
-                             ws: &mut WorkSpace) -> Column {
+    pub(crate) fn auto_dynam<R>(&self, info: &ExprInfo, store: &R,
+                             ws: &mut WorkSpace) -> Column
+    where R: Retrieve,
+    {
         if info.nlin.is_empty() {
             let mut col = Column::new();
             col.val = self.eval(store, &mut ws.ns);
@@ -928,7 +949,7 @@ impl Expr {
     }
 
     //auto_sep_dynam(&self, ginfo: &ExprInfo, sinfos: &Vec<SegInfo>,
-    //               store: &Retrieve, ws: &mut WorkSpace) -> Column {
+    //               store: &R, ws: &mut WorkSpace) -> Column {
     //    let mut gcol: Column::new();
     //    // Should call reverse method to get first derivatives and value
     //    //gcol.der1.resize(ginfo.nlin.len(), 0.0);
