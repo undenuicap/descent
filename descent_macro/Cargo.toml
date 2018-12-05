@@ -1,0 +1,11 @@
+[package]
+name = "descent_macro"
+version = "0.1.0"
+authors = ["Paul Scott <paul.m.sco@gmail.com>"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+descent = { path = "../" }
