@@ -511,7 +511,7 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
 // There will be a balance, as the evaluation sometimes calculate other values
 // as a by-product (e.g., the full_fwd call).
 // For example problem (non-sparsity function calls, those that had new_x):
-// f (99, 3) f_grad (73, 1) g (99, 95) g_grad (80, 1) l_hess (72, 0)
+// f (99, 3) f_grad (73, 1) g (99, 95) g_jac (80, 1) l_hess (72, 0)
 
 extern "C" fn f(
     n: ipopt::Index,
@@ -576,7 +576,7 @@ extern "C" fn f_grad(
     // states.
     // For f_grad looks like one first call values are not saved, but after
     // that they are.
-    // g_grad doesn't have same issue
+    // g_jac doesn't have same issue
     // l_hess is completely over the place, (scaling going on?)
     // For large sums and multiplications, should consider adding new operator
     // that might include a constant factor.
@@ -682,17 +682,35 @@ extern "C" fn g_jac(
 
         let values = unsafe { slice::from_raw_parts_mut(vals, nele_jac as usize) };
 
-        //println!("bef: {:?}", values);
-        // Could have put all the constant derivatives in one great big vector,
-        // and then just copy that chunk over.  Would require different
-        // sparsity ordering.
-        let mut vind = 0_usize;
-        for (i, col) in cb_data.cache.cons.iter().enumerate() {
-            let sp = vind + cb_data.cache.cons_const[i].der1.len();
-            let ed = sp + col.der1.len();
-            values[vind..sp].copy_from_slice(&cb_data.cache.cons_const[i].der1);
-            values[sp..ed].copy_from_slice(&col.der1);
-            vind = ed;
+        ////println!("bef: {:?}", values);
+        //// Could have put all the constant derivatives in one great big vector,
+        //// and then just copy that chunk over.  Would require different
+        //// sparsity ordering.
+        //let mut vind = 0_usize;
+        //for (i, col) in cb_data.cache.cons.iter().enumerate() {
+        //    let sp = vind + cb_data.cache.cons_const[i].der1.len();
+        //    let ed = sp + col.der1.len();
+        //    values[vind..sp].copy_from_slice(&cb_data.cache.cons_const[i].der1);
+        //    values[sp..ed].copy_from_slice(&col.der1);
+        //    vind = ed;
+        //}
+        for v in values.iter_mut() {
+            *v = 0.0;
+        }
+
+        let cache = &cb_data.cache;
+        let mut con_offset = 0_usize;
+        for ((col, col_const), con) in cache.cons.iter().zip(cache.cons_const.iter()).zip(cb_data.model.cons.iter()) {
+            //for (i, val) in con.expr.lin().zip(col_const.der1.iter()) {
+            for (i, val) in col_const.der1.iter().enumerate() {
+                values[i + con_offset] += *val;
+            }
+            con_offset += col_const.der1.len();
+            //for (i, val) in con.expr.nlin().zip(col.der1.iter()) {
+            for (i, val) in col.der1.iter().enumerate() {
+                values[i + con_offset] += *val;
+            }
+            con_offset += col.der1.len();
         }
         //println!("aft: {:?}", values);
     }

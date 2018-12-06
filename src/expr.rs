@@ -66,7 +66,23 @@ pub struct Par(pub ID);
 pub enum Expression {
     Expr(Expr, ExprInfo),
     ExprStatic(ExprStatic),
+    //ExprSum(Vec<(Expr, ExprInfo)>), // in from, check if Sum, then break up
+    //ExprStaticSum(Vec<ExprStatic>), // probably need a ExprStaticSum struct
 }
+
+// ExprStaticSum could be a compromise to allow dynamic addition of Static
+// Expressions.
+// Challenge is the potential overalap in sparsities and the output vectors
+// count overlap in values that need to be summed.
+// For sum could sum together gradients...
+// Already setting values to zero in f_grad, but g_jac copying slices over so
+// perhaps requires a comprimise.
+// Could have another buffer between static calcs and Column. Values get summed
+// into correct spot in column as each ExprStatic is calculated.
+// Keeping track of it could be tricky.
+// Should see if the slice copying is much faster than explicitly indexing each
+// entry. Could even check each Expression and only do the explicit indexing if
+// one of these summation types.
 
 impl Expression {
     pub(crate) fn lin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
