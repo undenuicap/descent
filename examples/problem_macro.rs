@@ -1,7 +1,10 @@
 // NumOps trait required to be in scope to use cos and powi
+#![feature(proc_macro_hygiene)]
+
 use descent::expr::{Expr, NumOps};
 use descent::ipopt_model::IpoptModel;
 use descent::model::Model;
+use descent_macro::expr;
 
 fn main() {
     // Large expression way worse than lots of small expressions.
@@ -23,18 +26,24 @@ fn main() {
     for _i in 0..n {
         xs.push(m.add_var(-1.5, 0.0, -0.5));
     }
+    println!("Building objective");
     let mut obj = Expr::from(0.0);
     for &x in &xs {
         obj = obj + (x - 1.0).powi(2);
     }
     //obj = (xs[0] - 1.0).powi(2);
+    println!("Setting objective");
     m.set_obj(obj);
+    println!("Building constraints");
     for i in 0..(n - 2) {
         let a = ((i + 2) as f64) / (n as f64);
-        let e = (xs[i + 1].powi(2) + 1.5 * xs[i + 1] - a) * xs[i + 2].cos() - xs[i];
+        // NEED to implement cos
+        //let e = expr!((y * y + 1.5 * y - a) * z.cos() - x; x = xs[i], y = xs[i + 1], z = xs[i + 2]);
+        let e = expr!((y * y + 1.5 * y - a) * z - x; x = xs[i], y = xs[i + 1], z = xs[i + 2]);
         //println!("{:?}", e);
         m.add_con(e, 0.0, 0.0);
     }
+    println!("Solving");
     //let a = f64::from(0 + 2)/(n as f64);
     //let e = (xs[0 + 1].powi(2) + 1.5*xs[0 + 1] - a)*xs[0 + 2].cos() - xs[0];
     //m.add_con(e, 0.0, 0.0);

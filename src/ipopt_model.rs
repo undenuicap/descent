@@ -6,18 +6,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern crate fnv;
-
-use expr::{Var, Par, ID};
-use expr::{Expr, ExprInfo, Retrieve, WorkSpace, Column};
-use model::{Model, Solution, SolutionStatus, Con};
-use ipopt;
+use crate::expr::{Column, Expr, Expression, Retrieve, WorkSpace};
+use crate::expr::{Par, Var, ID};
+use crate::ipopt;
+use crate::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
 //use std::collections::HashMap;
-use self::fnv::FnvHashMap;
-use std::ptr;
-use std::ffi::CString;
+use fnv::FnvHashMap;
 use std::f64;
+use std::ffi::CString;
+use std::ptr;
 
 struct Variable {
     lb: f64,
@@ -30,15 +28,13 @@ struct Parameter {
 }
 
 struct Constraint {
-    expr: Expr,
-    info: ExprInfo,
+    expr: Expression,
     lb: f64,
     ub: f64,
 }
 
 struct Objective {
-    expr: Expr,
-    info: ExprInfo,
+    expr: Expression,
 }
 
 struct ModelData {
@@ -51,7 +47,7 @@ struct ModelData {
 #[derive(Debug, Default)]
 struct ModelCache {
     j_sparsity: Vec<(usize, ID)>, // jacobian sparsity
-    h_sparsity: HesSparsity, // hessian sparsity
+    h_sparsity: HesSparsity,      // hessian sparsity
     ws: WorkSpace,
     cons_const: Vec<Column>,
     obj_const: Column,
@@ -91,8 +87,7 @@ impl Default for IpoptModel {
                 pars: Vec::new(),
                 cons: Vec::new(),
                 obj: Objective {
-                    expr: Expr::from(0.0),
-                    info: ExprInfo::new()
+                    expr: Expr::from(0.0).into(),
                 },
             },
             cache: None,
@@ -131,18 +126,18 @@ impl IpoptModel {
         let mut j_sparsity: Vec<(ID, ID)> = Vec::new();
         let mut h_sparsity = HesSparsity::new();
 
-        h_sparsity.add_obj(&self.model.obj.info);
+        h_sparsity.add_obj(&self.model.obj.expr);
 
         for (cid, c) in self.model.cons.iter().enumerate() {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
-            for &v in &c.info.lin {
+            for v in c.expr.lin() {
                 j_sparsity.push((cid, v));
             }
-            for &v in &c.info.nlin {
+            for v in c.expr.nlin() {
                 j_sparsity.push((cid, v));
             }
-            h_sparsity.add_con(&c.info);
+            h_sparsity.add_con(&c.expr);
         }
 
         let nvars = self.model.vars.len();
@@ -152,20 +147,22 @@ impl IpoptModel {
 
         // x_lb, x_ub, g_lb, g_ub are copied internally so don't need to keep
         let prob = unsafe {
-            ipopt::CreateIpoptProblem(nvars as i32,
-                                      x_lb.as_ptr(),
-                                      x_ub.as_ptr(),
-                                      ncons as i32,
-                                      g_lb.as_ptr(),
-                                      g_ub.as_ptr(),
-                                      nele_jac as i32,
-                                      nele_hes as i32,
-                                      0, // C-style indexing
-                                      f,
-                                      g,
-                                      f_grad,
-                                      g_jac,
-                                      l_hess)
+            ipopt::CreateIpoptProblem(
+                nvars as i32,
+                x_lb.as_ptr(),
+                x_ub.as_ptr(),
+                ncons as i32,
+                g_lb.as_ptr(),
+                g_ub.as_ptr(),
+                nele_jac as i32,
+                nele_hes as i32,
+                0, // C-style indexing
+                f,
+                g,
+                f_grad,
+                g_jac,
+                l_hess,
+            )
         };
 
         // From code always returns true
@@ -174,11 +171,23 @@ impl IpoptModel {
         //unsafe { ipopt::SetIntermediateCallback(prob, intermediate) };
 
         let mut cache = ModelCache {
-                j_sparsity: j_sparsity,
-                h_sparsity: h_sparsity,
-                ..Default::default()
-            };
+            j_sparsity: j_sparsity,
+            h_sparsity: h_sparsity,
+            ..Default::default()
+        };
         cache.cons.resize(ncons, Column::new());
+
+        // Need to allocate memory for static expressions
+        if let Expression::ExprStatic(expr) = &self.model.obj.expr {
+            cache.obj.der1.resize(expr.d1_sparsity.len(), 0.0);
+            cache.obj.der2.resize(expr.d2_sparsity.len(), 0.0);
+        }
+        for (cc, c) in cache.cons.iter_mut().zip(self.model.cons.iter()) {
+            if let Expression::ExprStatic(expr) = &c.expr {
+                cc.der1.resize(expr.d1_sparsity.len(), 0.0);
+                cc.der2.resize(expr.d2_sparsity.len(), 0.0);
+            }
+        }
 
         self.prob = Some(IpoptProblem { prob: prob });
         self.cache = Some(cache);
@@ -193,8 +202,7 @@ impl IpoptModel {
             let key_c = CString::new(key).unwrap();
             let val_c = CString::new(val).unwrap();
             unsafe {
-                ipopt::AddIpoptStrOption(prob.prob, key_c.as_ptr(),
-                    val_c.as_ptr()) != 0 // convert to bool
+                ipopt::AddIpoptStrOption(prob.prob, key_c.as_ptr(), val_c.as_ptr()) != 0 // convert to bool
             }
         } else {
             false
@@ -206,8 +214,7 @@ impl IpoptModel {
         if let Some(ref mut prob) = self.prob {
             let key_c = CString::new(key).unwrap();
             unsafe {
-                ipopt::AddIpoptNumOption(prob.prob, key_c.as_ptr(),
-                    val) != 0 // convert to bool
+                ipopt::AddIpoptNumOption(prob.prob, key_c.as_ptr(), val) != 0 // convert to bool
             }
         } else {
             false
@@ -219,8 +226,7 @@ impl IpoptModel {
         if let Some(ref mut prob) = self.prob {
             let key_c = CString::new(key).unwrap();
             unsafe {
-                ipopt::AddIpoptIntOption(prob.prob, key_c.as_ptr(),
-                    val) != 0 // convert to bool
+                ipopt::AddIpoptIntOption(prob.prob, key_c.as_ptr(), val) != 0 // convert to bool
             }
         } else {
             false
@@ -229,18 +235,17 @@ impl IpoptModel {
 
     // As it uses options above, will only last as long as model stays prepared
     pub fn silence(&mut self) -> bool {
-        self.set_str_option("sb", "yes")
-            && self.set_int_option("print_level", 0)
+        self.set_str_option("sb", "yes") && self.set_int_option("print_level", 0)
     }
 
     fn form_init_solution(&self, sol: &mut Solution) {
         // If no missing initial values, pull from variable
         let nvar_store = sol.store.vars.len();
-        sol.store.vars.extend(self.model.vars.iter()
-                              .skip(nvar_store)
-                              .map(|x| x.init));
+        sol.store
+            .vars
+            .extend(self.model.vars.iter().skip(nvar_store).map(|x| x.init));
         sol.store.vars.resize(self.model.vars.len(), 0.0); // if need to shrink
-        // Always redo parameters
+                                                           // Always redo parameters
         sol.store.pars.clear();
         for p in &self.model.pars {
             sol.store.pars.push(p.val);
@@ -252,26 +257,30 @@ impl IpoptModel {
     }
 
     // Should only be called after prepare
-    fn ipopt_solve(&mut self, mut sol: Solution) ->
-            (SolutionStatus, Option<Solution>) {
+    fn ipopt_solve(&mut self, mut sol: Solution) -> (SolutionStatus, Option<Solution>) {
         self.form_init_solution(&mut sol);
 
-        if let (&mut Some(ref mut cache), &Some(ref prob)) =
-                (&mut self.cache, &self.prob) {
+        if let (&mut Some(ref mut cache), &Some(ref prob)) = (&mut self.cache, &self.prob) {
             let ipopt_status;
             {
                 // Just passing it the solution store (in theory var values
                 // should not affect the values).
                 cache.cons_const.clear();
                 for c in &self.model.cons {
-                    cache.cons_const.push(c.expr.auto_const(&c.info,
-                                                            &sol.store,
-                                                            &mut cache.ws));
+                    if let Expression::Expr(expr, info) = &c.expr {
+                        cache
+                            .cons_const
+                            .push(expr.auto_const(&info, &sol.store, &mut cache.ws));
+                    } else {
+                        cache.cons_const.push(Column::new());
+                    }
                 }
 
-                let obj = &self.model.obj;
-                cache.obj_const = obj.expr.auto_const(&obj.info, &sol.store,
-                                                      &mut cache.ws);
+                cache.obj_const = if let Expression::Expr(expr, info) = &self.model.obj.expr {
+                    expr.auto_const(&info, &sol.store, &mut cache.ws)
+                } else {
+                    Column::new()
+                };
 
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
@@ -284,14 +293,16 @@ impl IpoptModel {
                 // This and others might throw and exception.  How would we
                 // catch?
                 ipopt_status = unsafe {
-                    ipopt::IpoptSolve(prob.prob,
-                                      sol.store.vars.as_mut_ptr(),
-                                      ptr::null_mut(), // can calc ourselves
-                                      &mut sol.obj_val,
-                                      sol.con_mult.as_mut_ptr(),
-                                      sol.var_lb_mult.as_mut_ptr(),
-                                      sol.var_ub_mult.as_mut_ptr(),
-                                      cb_data_ptr)
+                    ipopt::IpoptSolve(
+                        prob.prob,
+                        sol.store.vars.as_mut_ptr(),
+                        ptr::null_mut(), // can calc ourselves
+                        &mut sol.obj_val,
+                        sol.con_mult.as_mut_ptr(),
+                        sol.var_lb_mult.as_mut_ptr(),
+                        sol.var_ub_mult.as_mut_ptr(),
+                        cb_data_ptr,
+                    )
                 };
             }
             //println!("Counts: {:?} {:?} {:?} {:?} {:?}",
@@ -302,17 +313,15 @@ impl IpoptModel {
             //         cache.l_hess_count
             //         );
             // Should probably save ipopt_status to self
-            use ipopt::ApplicationReturnStatus as ARS;
-            use model::SolutionStatus as SS;
+            use crate::ipopt::ApplicationReturnStatus as ARS;
+            use crate::model::SolutionStatus as SS;
             let status = match ipopt_status {
-                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel =>
-                    SS::Solved,
+                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel => SS::Solved,
                 ARS::InfeasibleProblemDetected => SS::Infeasible,
                 _ => SS::Other,
             };
             match ipopt_status {
-                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel =>
-                    (status, Some(sol)),
+                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel => (status, Some(sol)),
                 _ => (status, None),
             }
         } else {
@@ -338,32 +347,44 @@ impl HesSparsity {
         *self.sp.entry(eid).or_insert(id)
     }
 
-    fn add_con(&mut self, info: &ExprInfo) {
+    fn add_con(&mut self, expr: &Expression) {
         let mut v = Vec::new();
-        for &(li1, li2) in &info.quad {
-            // get the non-local variable ids
-            let p = (info.nlin[li1], info.nlin[li2]);
-            v.push(self.get_index(p));
-        }
-        for &(li1, li2) in &info.nquad {
-            // get the non-local variable ids
-            let p = (info.nlin[li1], info.nlin[li2]);
-            v.push(self.get_index(p));
+        match expr {
+            Expression::Expr(_, info) => {
+                v.extend(info.quad
+                    .iter()
+                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
+                v.extend(info.nquad
+                    .iter()
+                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
+            },
+            Expression::ExprStatic(e) => {
+                v.extend(e.d2_sparsity
+                         .iter()
+                         .map(|(Var(v1), Var(v2))| self.get_index((*v1, *v2))));
+            },
         }
         self.cons_inds.push(v);
     }
 
-    fn add_obj(&mut self, info: &ExprInfo) {
-        for &(li1, li2) in &info.quad {
-            // get the non-local variable ids
-            let ind = self.get_index((info.nlin[li1], info.nlin[li2]));
-            self.obj_inds.push(ind);
+    fn add_obj(&mut self, expr: &Expression) {
+        let mut v = Vec::new();
+        match expr {
+            Expression::Expr(_, info) => {
+                v.extend(info.quad
+                    .iter()
+                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
+                v.extend(info.nquad
+                    .iter()
+                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
+            },
+            Expression::ExprStatic(e) => {
+                v.extend(e.d2_sparsity
+                         .iter()
+                         .map(|(Var(v1), Var(v2))| self.get_index((*v1, *v2))));
+            },
         }
-        for &(li1, li2) in &info.nquad {
-            // get the non-local variable ids
-            let ind = self.get_index((info.nlin[li1], info.nlin[li2]));
-            self.obj_inds.push(ind);
-        }
+        self.obj_inds = v;
     }
 
     fn len(&self) -> usize {
@@ -381,31 +402,31 @@ impl Model for IpoptModel {
     fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var {
         self.prepared = false;
         let id = self.model.vars.len();
-        self.model.vars.push(Variable { lb: lb, ub: ub, init: init });
+        self.model.vars.push(Variable { lb, ub, init });
         Var(id)
     }
 
     fn add_par(&mut self, val: f64) -> Par {
         self.prepared = false;
         let id = self.model.pars.len();
-        self.model.pars.push(Parameter { val: val });
+        self.model.pars.push(Parameter { val });
         Par(id)
     }
 
-    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> Con {
+    fn add_con<E: Into<Expression>>(&mut self, expr: E, lb: f64, ub: f64) -> Con {
         self.prepared = false;
         let id = self.model.cons.len();
-        let info = expr.get_info();
-        //println!("{:?}", info);
-        self.model.cons.push(Constraint { expr: expr, info: info,
-            lb: lb, ub: ub });
+        self.model.cons.push(Constraint {
+            expr: expr.into(),
+            lb: lb,
+            ub: ub,
+        });
         Con(id)
     }
 
-    fn set_obj(&mut self, expr: Expr) {
+    fn set_obj<E: Into<Expression>>(&mut self, expr: E) {
         self.prepared = false;
-        let info = expr.get_info();
-        self.model.obj = Objective { expr: expr, info: info };
+        self.model.obj = Objective { expr: expr.into() };
     }
 
     /// Set parameter to value
@@ -430,8 +451,7 @@ impl Model for IpoptModel {
         self.ipopt_solve(sol)
     }
 
-    fn warm_solve(&mut self, sol: Solution) ->
-            (SolutionStatus, Option<Solution>) {
+    fn warm_solve(&mut self, sol: Solution) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
         // Should set up warm start stuff
         self.ipopt_solve(sol)
@@ -453,16 +473,34 @@ impl<'a> Retrieve for Store<'a> {
     }
 }
 
+/// Need to initialise the columns to correct lengths for static expr's
 fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
-    let obj = &cb_data.model.obj;
-    cb_data.cache.obj = obj.expr.auto_dynam(&obj.info, store,
-                                            &mut cb_data.cache.ws);
+    match &cb_data.model.obj.expr {
+        Expression::Expr(expr, info) => {
+            cb_data.cache.obj = expr.auto_dynam(info, store, &mut cb_data.cache.ws);
+        }
+        Expression::ExprStatic(expr) => {
+            cb_data.cache.obj.val = (expr.all)(
+                store.vars,
+                store.pars,
+                &mut cb_data.cache.obj.der1,
+                &mut cb_data.cache.obj.der2,
+            );
+        }
+    }
 }
 
+/// Need to initialise the columns to correct lengths for static expr's
 fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
-    for (cc, c) in cb_data.cache.cons.iter_mut()
-                   .zip(cb_data.model.cons.iter()) {
-        *cc = c.expr.auto_dynam(&c.info, store, &mut cb_data.cache.ws);
+    for (cc, c) in cb_data.cache.cons.iter_mut().zip(cb_data.model.cons.iter()) {
+        match &c.expr {
+            Expression::Expr(expr, info) => {
+                *cc = expr.auto_dynam(info, store, &mut cb_data.cache.ws);
+            }
+            Expression::ExprStatic(expr) => {
+                cc.val = (expr.all)(store.vars, store.pars, &mut cc.der1, &mut cc.der2);
+            }
+        }
     }
 }
 
@@ -475,15 +513,14 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
 // For example problem (non-sparsity function calls, those that had new_x):
 // f (99, 3) f_grad (73, 1) g (99, 95) g_grad (80, 1) l_hess (72, 0)
 
-extern fn f(
-        n: ipopt::Index,
-        x: *const ipopt::Number,
-        new_x: ipopt::Bool,
-        obj_value: *mut ipopt::Number,
-        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
-    };
+extern "C" fn f(
+    n: ipopt::Index,
+    x: *const ipopt::Number,
+    new_x: ipopt::Bool,
+    obj_value: *mut ipopt::Number,
+    user_data: ipopt::UserDataPtr,
+) -> ipopt::Bool {
+    let cb_data: &mut IpoptCBData = unsafe { &mut *(user_data as *mut IpoptCBData) };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -506,15 +543,14 @@ extern fn f(
     1
 }
 
-extern fn f_grad(
-        n: ipopt::Index,
-        x: *const ipopt::Number,
-        new_x: ipopt::Bool,
-        grad_f: *mut ipopt::Number,
-        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
-    };
+extern "C" fn f_grad(
+    n: ipopt::Index,
+    x: *const ipopt::Number,
+    new_x: ipopt::Bool,
+    grad_f: *mut ipopt::Number,
+    user_data: ipopt::UserDataPtr,
+) -> ipopt::Bool {
+    let cb_data: &mut IpoptCBData = unsafe { &mut *(user_data as *mut IpoptCBData) };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -552,26 +588,25 @@ extern fn f_grad(
     }
 
     // f_grad expects variables in order
-    for (i, &v) in cb_data.model.obj.info.lin.iter().enumerate() {
+    for (i, v) in cb_data.model.obj.expr.lin().enumerate() {
         values[v] = cb_data.cache.obj_const.der1[i];
     }
-    for (i, &v) in cb_data.model.obj.info.nlin.iter().enumerate() {
+    for (i, v) in cb_data.model.obj.expr.nlin().enumerate() {
         values[v] = cb_data.cache.obj.der1[i];
     }
     //println!("aft: {:?}", values);
     1
 }
 
-extern fn g(
-        n: ipopt::Index,
-        x: *const ipopt::Number,
-        new_x: ipopt::Bool,
-        m: ipopt::Index,
-        g: *mut ipopt::Number,
-        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
-    };
+extern "C" fn g(
+    n: ipopt::Index,
+    x: *const ipopt::Number,
+    new_x: ipopt::Bool,
+    m: ipopt::Index,
+    g: *mut ipopt::Number,
+    user_data: ipopt::UserDataPtr,
+) -> ipopt::Bool {
+    let cb_data: &mut IpoptCBData = unsafe { &mut *(user_data as *mut IpoptCBData) };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -600,19 +635,18 @@ extern fn g(
     1
 }
 
-extern fn g_jac(
-        n: ipopt::Index,
-        x: *const ipopt::Number,
-        new_x: ipopt::Bool,
-        m: ipopt::Index,
-        nele_jac: ipopt::Index,
-        i_row: *mut ipopt::Index,
-        j_col: *mut ipopt::Index,
-        vals: *mut ipopt::Number,
-        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
-    };
+extern "C" fn g_jac(
+    n: ipopt::Index,
+    x: *const ipopt::Number,
+    new_x: ipopt::Bool,
+    m: ipopt::Index,
+    nele_jac: ipopt::Index,
+    i_row: *mut ipopt::Index,
+    j_col: *mut ipopt::Index,
+    vals: *mut ipopt::Number,
+    user_data: ipopt::UserDataPtr,
+) -> ipopt::Bool {
+    let cb_data: &mut IpoptCBData = unsafe { &mut *(user_data as *mut IpoptCBData) };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -626,12 +660,8 @@ extern fn g_jac(
 
     if vals.is_null() {
         // Set sparsity
-        let row = unsafe {
-            slice::from_raw_parts_mut(i_row, nele_jac as usize)
-        };
-        let col = unsafe {
-            slice::from_raw_parts_mut(j_col, nele_jac as usize)
-        };
+        let row = unsafe { slice::from_raw_parts_mut(i_row, nele_jac as usize) };
+        let col = unsafe { slice::from_raw_parts_mut(j_col, nele_jac as usize) };
         for (i, &(cid, vid)) in cb_data.cache.j_sparsity.iter().enumerate() {
             row[i] = cid as i32;
             col[i] = vid as i32;
@@ -650,9 +680,7 @@ extern fn g_jac(
             solve_cons(cb_data, &store);
         }
 
-        let values = unsafe {
-            slice::from_raw_parts_mut(vals, nele_jac as usize)
-        };
+        let values = unsafe { slice::from_raw_parts_mut(vals, nele_jac as usize) };
 
         //println!("bef: {:?}", values);
         // Could have put all the constant derivatives in one great big vector,
@@ -671,22 +699,21 @@ extern fn g_jac(
     1
 }
 
-extern fn l_hess(
-        n: ipopt::Index,
-        x: *const ipopt::Number,
-        new_x: ipopt::Bool,
-        obj_factor: ipopt::Number,
-        m: ipopt::Index,
-        lambda: *const ipopt::Number,
-        _new_lambda: ipopt::Bool,
-        nele_hes: ipopt::Index,
-        i_row: *mut ipopt::Index,
-        j_col: *mut ipopt::Index,
-        vals: *mut ipopt::Number,
-        user_data: ipopt::UserDataPtr) -> ipopt::Bool {
-    let cb_data: &mut IpoptCBData = unsafe {
-        &mut *(user_data as *mut IpoptCBData)
-    };
+extern "C" fn l_hess(
+    n: ipopt::Index,
+    x: *const ipopt::Number,
+    new_x: ipopt::Bool,
+    obj_factor: ipopt::Number,
+    m: ipopt::Index,
+    lambda: *const ipopt::Number,
+    _new_lambda: ipopt::Bool,
+    nele_hes: ipopt::Index,
+    i_row: *mut ipopt::Index,
+    j_col: *mut ipopt::Index,
+    vals: *mut ipopt::Number,
+    user_data: ipopt::UserDataPtr,
+) -> ipopt::Bool {
+    let cb_data: &mut IpoptCBData = unsafe { &mut *(user_data as *mut IpoptCBData) };
 
     if n != cb_data.model.vars.len() as i32 {
         return 0;
@@ -700,12 +727,8 @@ extern fn l_hess(
 
     if vals.is_null() {
         // Set sparsity
-        let row = unsafe {
-            slice::from_raw_parts_mut(i_row, nele_hes as usize)
-        };
-        let col = unsafe {
-            slice::from_raw_parts_mut(j_col, nele_hes as usize)
-        };
+        let row = unsafe { slice::from_raw_parts_mut(i_row, nele_hes as usize) };
+        let col = unsafe { slice::from_raw_parts_mut(j_col, nele_hes as usize) };
         for (vids, &ind) in &cb_data.cache.h_sparsity.sp {
             row[ind] = vids.0 as i32;
             col[ind] = vids.1 as i32;
@@ -725,9 +748,7 @@ extern fn l_hess(
         }
 
         let lam = unsafe { slice::from_raw_parts(lambda, m as usize) };
-        let values = unsafe {
-            slice::from_raw_parts_mut(vals, nele_hes as usize)
-        };
+        let values = unsafe { slice::from_raw_parts_mut(vals, nele_hes as usize) };
 
         //println!("bef: {:?}", values);
         // Looks like this is required as values are non-zero and all over the
@@ -739,13 +760,13 @@ extern fn l_hess(
         let mut ind_pos = 0;
         for v in &cb_data.cache.obj_const.der2 {
             let vind = cb_data.cache.h_sparsity.obj_inds[ind_pos];
-            values[vind] += obj_factor*v;
+            values[vind] += obj_factor * v;
             ind_pos += 1;
         }
 
         for v in &cb_data.cache.obj.der2 {
             let vind = cb_data.cache.h_sparsity.obj_inds[ind_pos];
-            values[vind] += obj_factor*v;
+            values[vind] += obj_factor * v;
             ind_pos += 1;
         }
 
@@ -754,13 +775,13 @@ extern fn l_hess(
 
             for v in &cb_data.cache.cons_const[i].der2 {
                 let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
-                values[vind] += l*v;
+                values[vind] += l * v;
                 ind_pos += 1;
             }
 
             for v in &cb_data.cache.cons[i].der2 {
                 let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
-                values[vind] += l*v;
+                values[vind] += l * v;
                 ind_pos += 1;
             }
         }
@@ -772,13 +793,13 @@ extern fn l_hess(
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use expr::NumOps;
     use super::*;
+    use crate::expr::NumOps;
     #[test]
     fn univar_problem() {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0, 0.0);
-        m.set_obj(x*x);
+        m.set_obj(x * x);
         assert!(m.silence());
         let (stat, sol) = m.solve();
         assert_eq!(stat, SolutionStatus::Solved);
@@ -794,7 +815,7 @@ mod tests {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0, 0.0);
         let y = m.add_var(-1.0, 1.0, 0.0);
-        m.set_obj(x*x + y*y + x*y);
+        m.set_obj(x * x + y * y + x * y);
         m.silence();
         let (stat, sol) = m.solve();
         assert_eq!(stat, SolutionStatus::Solved);
@@ -811,7 +832,7 @@ mod tests {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0, 0.0);
         let y = m.add_var(-1.0, 1.0, 0.0);
-        m.set_obj(x*x + y*y + x*y);
+        m.set_obj(x * x + y * y + x * y);
         m.add_con(x + y, 0.75, 0.75);
         m.silence();
         let (stat, sol) = m.solve();
@@ -829,7 +850,7 @@ mod tests {
         let mut m = IpoptModel::new();
         let x = m.add_var(1.0, 5.0, 0.0);
         let y = m.add_var(-1.0, 1.0, 0.0);
-        m.set_obj(x*x + y*y + x*y);
+        m.set_obj(x * x + y * y + x * y);
         m.add_con(x + y, 0.25, 0.40);
         m.silence();
         let (stat, sol) = m.solve();
@@ -847,8 +868,8 @@ mod tests {
         let mut m = IpoptModel::new();
         let x = m.add_var(-10.0, 10.0, 0.0);
         let y = m.add_var(f64::NEG_INFINITY, f64::INFINITY, 0.0);
-        m.set_obj(2.0*y);
-        m.add_con(y - x*x + x, 0.0, f64::INFINITY);
+        m.set_obj(2.0 * y);
+        m.add_con(y - x * x + x, 0.0, f64::INFINITY);
         m.silence();
         let (stat, sol) = m.solve();
         assert_eq!(stat, SolutionStatus::Solved);
@@ -873,10 +894,9 @@ mod tests {
             obj = obj + (x - 1.0).powi(2);
         }
         m.set_obj(obj);
-        for i in 0..(n-2) {
-            let a = ((i + 2) as f64)/(n as f64);
-            let e = (xs[i + 1].powi(2) + 1.5*xs[i + 1] - a)*xs[i + 2].cos()
-                - xs[i];
+        for i in 0..(n - 2) {
+            let a = ((i + 2) as f64) / (n as f64);
+            let e = (xs[i + 1].powi(2) + 1.5 * xs[i + 1] - a) * xs[i + 2].cos() - xs[i];
             m.add_con(e, 0.0, 0.0);
         }
         m.silence();

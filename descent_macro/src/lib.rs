@@ -423,11 +423,14 @@ pub fn expr(input: TokenStream) -> TokenStream {
     }
 
     let mut split = separate_on_punct(input, ';');
-    if split.len() != 3 {
-        panic!("Expected two semicolons in input");
+    if split.len() < 2 {
+        panic!("Expected variables to be specified");
     }
 
-    let p = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
+    let mut p = IdenVec::new();
+    if split.len() == 3 {
+        p = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
+    }
     let v = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
     let mut v_set = HashSet::new();
     let mut p_set = HashSet::new();
@@ -507,7 +510,7 @@ pub fn expr(input: TokenStream) -> TokenStream {
 
     let mut body = Vec::new();
     for (k1, k2) in &d2_nz {
-        body.extend(TokenStream::from_str(&format!("({}, {})", &k1, &k2)).unwrap().into_iter());
+        body.extend(TokenStream::from_str(&format!("descent::expr::order({}, {})", &k1, &k2)).unwrap().into_iter());
         body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
     }
     let mut d2_spar = Vec::new();
@@ -582,6 +585,6 @@ pub fn expr(input: TokenStream) -> TokenStream {
     // outer block to allow local scope for lets
     ret.push(TokenTree::Group(Group::new(Delimiter::Brace, structure.into_iter().collect())));
     let ret: TokenStream = ret.into_iter().collect();
-    println!("TokenStream: {}", ret.to_string());
+    //println!("TokenStream: {}", ret.to_string());
     ret
 }

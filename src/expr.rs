@@ -6,8 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Mul, Sub};
-use std::collections::{HashSet, HashMap};
 
 pub type ID = usize;
 
@@ -56,17 +56,53 @@ impl Retrieve for Store {
 }
 
 /// Variable identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Var(pub ID);
 
 /// Parameter identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Par(pub ID);
+
+pub enum Expression {
+    Expr(Expr, ExprInfo),
+    ExprStatic(ExprStatic),
+}
+
+impl Expression {
+    pub(crate) fn lin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+        match self {
+            Expression::Expr(_, info) => Box::new(info.lin.iter().cloned()),
+            Expression::ExprStatic(_) => Box::new(std::iter::empty()),
+        }
+    }
+
+    pub(crate) fn nlin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+        match self {
+            Expression::Expr(_, info) => Box::new(info.nlin.iter().cloned()),
+            Expression::ExprStatic(e) => Box::new(e.d1_sparsity.iter().map(|Var(v)| *v)),
+        }
+    }
+}
+
+impl From<Expr> for Expression {
+    fn from(v: Expr) -> Self {
+        let info = v.get_info();
+        Expression::Expr(v, info)
+    }
+}
+
+impl From<ExprStatic> for Expression {
+    fn from(v: ExprStatic) -> Self {
+        Expression::ExprStatic(v)
+    }
+}
 
 // Could provide a separate calculation for constant entries, or at the minimum
 // indicate if the entire first or second derivative is constant. If have
 // one mega-function then might not be much benefit to keeping track if
 // something is constant or not.
+//
+// Should Use Rc instead of Box if want to easily clone.
 
 /// "Static" expression with pointers to functions to evaluated the expression
 /// and its first and second derivatives.
@@ -75,23 +111,26 @@ pub struct Par(pub ID);
 /// enough to include the indices of the vars / pars for the expression.
 pub struct ExprStatic {
     pub f: Box<Fn(&[f64], &[f64]) -> f64>,
-    pub d1: Box<Fn(&[f64], &[f64], &mut[f64])>,
-    pub d2: Box<Fn(&[f64], &[f64], &mut[f64])>,
-    pub all: Box<Fn(&[f64], &[f64], &mut[f64], &mut[f64]) -> f64>,
-    pub d1_sparsity: Vec<Var>, // sparsity / order for d1 output
+    pub d1: Box<Fn(&[f64], &[f64], &mut [f64])>,
+    pub d2: Box<Fn(&[f64], &[f64], &mut [f64])>,
+    pub all: Box<Fn(&[f64], &[f64], &mut [f64], &mut [f64]) -> f64>,
+    pub d1_sparsity: Vec<Var>,        // sparsity / order for d1 output
     pub d2_sparsity: Vec<(Var, Var)>, // sparsity / order for d2 output
 }
 
 /// Order second derivative pairs.
 ///
 /// Should fill out bottom left of Hessian with this ordering.
-fn order(a: ID, b: ID) -> (ID, ID) {
-    if a < b { (b, a) } else { (a, b) }
+pub fn order<T: PartialOrd>(a: T, b: T) -> (T, T) {
+    if a < b {
+        (b, a)
+    } else {
+        (a, b)
+    }
 }
 
 /// Cross two sets of IDs.
-fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>,
-             target: &mut HashSet<(ID, ID)>)  {
+fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>, target: &mut HashSet<(ID, ID)>) {
     for &id1 in id1s {
         for &id2 in id2s {
             target.insert(order(id1, id2));
@@ -313,7 +352,7 @@ impl WorkSpace {
 ///
 /// The contracts from `Degree` are expected to be held.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct ExprInfo {
+pub struct ExprInfo {
     /// Constant first derivative
     pub(crate) lin: Vec<ID>,
     /// Non-constant first derivative
@@ -344,7 +383,7 @@ pub(crate) struct ExprInfo {
 /// When everything is ordered, when traversed it will preserve original
 /// `quad`/`nquad` orderings.
 #[cfg(test)]
-fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>>{
+fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>> {
     let mut vs = Vec::new();
     vs.resize(nlin.len(), Vec::new());
     for &(i, j) in sec {
@@ -396,7 +435,8 @@ pub struct Expr {
 impl Expr {
     /// Value of the expression.
     pub(crate) fn eval<R>(&self, ret: &R, ns: &mut Vec<f64>) -> f64
-    where R: Retrieve,
+    where
+        R: Retrieve,
     {
         use self::Oper::*;
         ns.resize(self.len(), 0.0);
@@ -407,7 +447,7 @@ impl Expr {
             match *op {
                 Add(j) => *cur = left[i - 1] + left[i - j],
                 Sub(j) => *cur = left[i - j] - left[i - 1],
-                Mul(j) => *cur = left[i - 1]*left[i - j],
+                Mul(j) => *cur = left[i - 1] * left[i - j],
                 Neg => *cur = -left[i - 1],
                 Pow(pow) => *cur = left[i - 1].powi(pow),
                 Sin => *cur = left[i - 1].sin(),
@@ -418,7 +458,7 @@ impl Expr {
                         *cur += left[i - j];
                     }
                 }
-                Square => *cur = left[i - 1]*left[i - 1],
+                Square => *cur = left[i - 1] * left[i - 1],
                 Variable(v) => *cur = ret.var(v),
                 Parameter(p) => *cur = ret.par(p),
                 Float(val) => *cur = val,
@@ -457,19 +497,18 @@ impl Expr {
             match *op {
                 Add(j) => *cur = left[i - 1] + left[i - j],
                 Sub(j) => *cur = left[i - j] - left[i - 1],
-                Mul(j) => *cur = left[i - 1]*ns[i - j] + left[i - j]*ns[i - 1],
+                Mul(j) => *cur = left[i - 1] * ns[i - j] + left[i - j] * ns[i - 1],
                 Neg => *cur = -left[i - 1],
-                Pow(pow) => *cur = f64::from(pow)*left[i - 1]
-                    *ns[i - 1].powi(pow - 1),
-                Sin => *cur = left[i - 1]*ns[i - 1].cos(),
-                Cos => *cur = -left[i - 1]*ns[i - 1].sin(),
+                Pow(pow) => *cur = f64::from(pow) * left[i - 1] * ns[i - 1].powi(pow - 1),
+                Sin => *cur = left[i - 1] * ns[i - 1].cos(),
+                Cos => *cur = -left[i - 1] * ns[i - 1].sin(),
                 Sum(ref js) => {
                     *cur = left[i - 1];
                     for &j in js {
                         *cur += left[i - j];
                     }
                 }
-                Square => *cur = 2.0*left[i - 1]*ns[i - 1],
+                Square => *cur = 2.0 * left[i - 1] * ns[i - 1],
                 Variable(Var(id)) => *cur = if id == v1 { 1.0 } else { 0.0 },
                 _ => *cur = 0.0,
             }
@@ -496,8 +535,13 @@ impl Expr {
     /// ```text
     /// na1_j = na1 dn/dn_j
     /// ```
-    fn der1_rev(&self, v1s: &[ID], ns: &[f64], na1s: &mut Vec<f64>,
-                ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+    fn der1_rev(
+        &self,
+        v1s: &[ID],
+        ns: &[f64],
+        na1s: &mut Vec<f64>,
+        ids: &mut HashMap<ID, f64>,
+    ) -> Vec<f64> {
         use self::Oper::*;
         use self::Var;
 
@@ -519,26 +563,26 @@ impl Expr {
                     left[i - j] = cur;
                 }
                 Sub(j) => {
-                    // Take note of order where oth - pre 
+                    // Take note of order where oth - pre
                     left[i - 1] = -cur;
                     left[i - j] = cur;
                 }
                 Mul(j) => {
-                    left[i - 1] = ns[i - j]*cur;
-                    left[i - j] = ns[i - 1]*cur;
+                    left[i - 1] = ns[i - j] * cur;
+                    left[i - j] = ns[i - 1] * cur;
                 }
                 Neg => {
                     left[i - 1] = -cur;
                 }
                 Pow(pow) => {
                     // Assume it is not 0 or 1
-                    left[i - 1] = f64::from(pow)*ns[i - 1].powi(pow - 1)*cur;
+                    left[i - 1] = f64::from(pow) * ns[i - 1].powi(pow - 1) * cur;
                 }
                 Sin => {
-                    left[i - 1] = ns[i - 1].cos()*cur;
+                    left[i - 1] = ns[i - 1].cos() * cur;
                 }
                 Cos => {
-                    left[i - 1] = -ns[i - 1].sin()*cur;
+                    left[i - 1] = -ns[i - 1].sin() * cur;
                 }
                 Sum(ref js) => {
                     left[i - 1] = cur;
@@ -547,7 +591,7 @@ impl Expr {
                     }
                 }
                 Square => {
-                    left[i - 1] = 2.0*ns[i - 1]*cur;
+                    left[i - 1] = 2.0 * ns[i - 1] * cur;
                 }
                 Variable(Var(id)) => {
                     if let Some(v) = ids.get_mut(&id) {
@@ -572,7 +616,7 @@ impl Expr {
     /// dn/dx_adx_a = \sum_{j \in js} d^2n_j/dx_adx_a
     ///     + \sum_{j, k \in js} d^2n/dn_jdn_k dn_j/dx_a dn_k/dx_b
     /// ```
-    /// 
+    ///
     /// If we have precomputed the node derivatives wrt `x_b`: `nds`, then when
     /// we follow one path, we only need to pass on two "adjoint" values to
     /// each operand.  Given adjoints (na1, na2) for n, then the adjoint of
@@ -589,9 +633,15 @@ impl Expr {
     /// with the second adjoint of the variable if it appears anywhere else in
     /// the expression
     #[cfg(test)]
-    fn der2_rev(&self, dl2: &[ID], ns: &[f64], nds: &[f64],
-                na1s: &mut Vec<f64>, na2s: &mut Vec<f64>,
-                ids: &mut HashMap<ID, f64>) -> Vec<f64> {
+    fn der2_rev(
+        &self,
+        dl2: &[ID],
+        ns: &[f64],
+        nds: &[f64],
+        na1s: &mut Vec<f64>,
+        na2s: &mut Vec<f64>,
+        ids: &mut HashMap<ID, f64>,
+    ) -> Vec<f64> {
         use self::Oper::*;
         use self::Var;
 
@@ -619,17 +669,17 @@ impl Expr {
                     l2[i - j] = c2;
                 }
                 Sub(j) => {
-                    // Take note of order where oth - pre 
+                    // Take note of order where oth - pre
                     l1[i - 1] = -c1;
                     l2[i - 1] = -c2;
                     l1[i - j] = c1;
                     l2[i - j] = c2;
                 }
                 Mul(j) => {
-                    l1[i - 1] = c1*ns[i - j];
-                    l2[i - 1] = c2*ns[i - j] + c1*nds[i - j];
-                    l1[i - j] = c1*ns[i - 1];
-                    l2[i - j] = c2*ns[i - 1] + c1*nds[i - 1];
+                    l1[i - 1] = c1 * ns[i - j];
+                    l2[i - 1] = c2 * ns[i - j] + c1 * nds[i - j];
+                    l1[i - j] = c1 * ns[i - 1];
+                    l2[i - j] = c2 * ns[i - 1] + c1 * nds[i - 1];
                 }
                 Neg => {
                     l1[i - 1] = -c1;
@@ -637,21 +687,18 @@ impl Expr {
                 }
                 Pow(pow) => {
                     // Assume it is not 0 or 1
-                    let vald = f64::from(pow)*ns[i - 1].powi(pow - 1);
-                    let valdd = f64::from(pow*(pow - 1))
-                                *ns[i - 1].powi(pow - 2);
-                    l1[i - 1] = c1*vald;
-                    l2[i - 1] = c2*vald + c1*valdd*nds[i - 1];
+                    let vald = f64::from(pow) * ns[i - 1].powi(pow - 1);
+                    let valdd = f64::from(pow * (pow - 1)) * ns[i - 1].powi(pow - 2);
+                    l1[i - 1] = c1 * vald;
+                    l2[i - 1] = c2 * vald + c1 * valdd * nds[i - 1];
                 }
                 Sin => {
-                    l1[i - 1] = c1*ns[i - 1].cos();
-                    l2[i - 1] = c2*ns[i - 1].cos()
-                                - c1*ns[i - 1].sin()*nds[i - 1];
+                    l1[i - 1] = c1 * ns[i - 1].cos();
+                    l2[i - 1] = c2 * ns[i - 1].cos() - c1 * ns[i - 1].sin() * nds[i - 1];
                 }
                 Cos => {
-                    l1[i - 1] = -c1*ns[i - 1].sin();
-                    l2[i - 1] = -c2*ns[i - 1].sin()
-                                - c1*ns[i - 1].cos()*nds[i - 1];
+                    l1[i - 1] = -c1 * ns[i - 1].sin();
+                    l2[i - 1] = -c2 * ns[i - 1].sin() - c1 * ns[i - 1].cos() * nds[i - 1];
                 }
                 Sum(ref js) => {
                     l1[i - 1] = c1;
@@ -662,8 +709,8 @@ impl Expr {
                     }
                 }
                 Square => {
-                    l1[i - 1] = c1*2.0*ns[i - 1];
-                    l2[i - 1] = c2*2.0*ns[i - 1] + c1*2.0*nds[i - 1];
+                    l1[i - 1] = c1 * 2.0 * ns[i - 1];
+                    l2[i - 1] = c2 * 2.0 * ns[i - 1] + c1 * 2.0 * nds[i - 1];
                 }
                 Variable(Var(id)) => {
                     if let Some(v) = ids.get_mut(&id) {
@@ -681,13 +728,18 @@ impl Expr {
     }
 
     /// Value, and derivatives using forward method.
-    fn full_fwd<'a, R>(&self, v1s: &[ID], v2s: &[(usize, usize)],
-                    ret: &R,
-                    cols: &'a mut Vec<Column>) -> &'a Column 
-    where R: Retrieve,
+    fn full_fwd<'a, R>(
+        &self,
+        v1s: &[ID],
+        v2s: &[(usize, usize)],
+        ret: &R,
+        cols: &'a mut Vec<Column>,
+    ) -> &'a Column
+    where
+        R: Retrieve,
     {
         use self::Oper::*;
-        use self::{Var, Par};
+        use self::{Par, Var};
         // Only resize up
         if cols.len() < self.len() {
             cols.resize(self.len(), Column::new());
@@ -702,43 +754,63 @@ impl Expr {
                     let pre = &left[i - 1];
                     let oth = &left[i - j];
                     cur.val = pre.val + oth.val;
-                    for ((c, p), o) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
+                    for ((c, p), o) in cur
+                        .der1
+                        .iter_mut()
+                        .zip(pre.der1.iter())
+                        .zip(oth.der1.iter())
+                    {
                         *c = p + o;
                     }
-                    for ((c, p), o) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
+                    for ((c, p), o) in cur
+                        .der2
+                        .iter_mut()
+                        .zip(pre.der2.iter())
+                        .zip(oth.der2.iter())
+                    {
                         *c = p + o;
                     }
                 }
                 Sub(j) => {
-                    // Take note of order where oth - pre 
+                    // Take note of order where oth - pre
                     let pre = &left[i - 1];
                     let oth = &left[i - j];
                     cur.val = oth.val - pre.val;
-                    for ((c, p), o) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()).zip(oth.der1.iter()) {
+                    for ((c, p), o) in cur
+                        .der1
+                        .iter_mut()
+                        .zip(pre.der1.iter())
+                        .zip(oth.der1.iter())
+                    {
                         *c = o - p;
                     }
-                    for ((c, p), o) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(oth.der2.iter()) {
+                    for ((c, p), o) in cur
+                        .der2
+                        .iter_mut()
+                        .zip(pre.der2.iter())
+                        .zip(oth.der2.iter())
+                    {
                         *c = o - p;
                     }
                 }
                 Mul(j) => {
                     let pre = &left[i - 1];
                     let oth = &left[i - j];
-                    cur.val = pre.val*oth.val;
+                    cur.val = pre.val * oth.val;
                     for k in 0..(v1s.len()) {
-                        cur.der1[k] = pre.der1[k]*oth.val
-                                    + pre.val*oth.der1[k];
+                        cur.der1[k] = pre.der1[k] * oth.val + pre.val * oth.der1[k];
                     }
-                    for (((c, p), o), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(oth.der2.iter())
-                            .zip(v2s.iter()) {
-                        *c = p*oth.val + pre.val*o
-                             + pre.der1[k1]*oth.der1[k2]
-                             + pre.der1[k2]*oth.der1[k1];
+                    for (((c, p), o), &(k1, k2)) in cur
+                        .der2
+                        .iter_mut()
+                        .zip(pre.der2.iter())
+                        .zip(oth.der2.iter())
+                        .zip(v2s.iter())
+                    {
+                        *c = p * oth.val
+                            + pre.val * o
+                            + pre.der1[k1] * oth.der1[k2]
+                            + pre.der1[k2] * oth.der1[k1];
                     }
                 }
                 Neg => {
@@ -755,15 +827,15 @@ impl Expr {
                     // Assume it is not 0 or 1
                     let pre = &left[i - 1];
                     cur.val = pre.val.powi(pow);
-                    let vald = f64::from(pow)*pre.val.powi(pow - 1);
-                    let valdd = f64::from(pow*(pow - 1))*pre.val.powi(pow - 2);
-                    for (c, p) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()) {
-                        *c = p*vald;
+                    let vald = f64::from(pow) * pre.val.powi(pow - 1);
+                    let valdd = f64::from(pow * (pow - 1)) * pre.val.powi(pow - 2);
+                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
+                        *c = p * vald;
                     }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(v2s.iter()) {
-                        *c = p*vald + pre.der1[k1]*pre.der1[k2]*valdd;
+                    for ((c, p), &(k1, k2)) in
+                        cur.der2.iter_mut().zip(pre.der2.iter()).zip(v2s.iter())
+                    {
+                        *c = p * vald + pre.der1[k1] * pre.der1[k2] * valdd;
                     }
                 }
                 Sin => {
@@ -771,11 +843,12 @@ impl Expr {
                     cur.val = pre.val.sin();
                     let valcos = pre.val.cos();
                     for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
-                        *c = p*valcos;
+                        *c = p * valcos;
                     }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(v2s.iter()) {
-                        *c = p*valcos - pre.der1[k1]*pre.der1[k2]*cur.val;
+                    for ((c, p), &(k1, k2)) in
+                        cur.der2.iter_mut().zip(pre.der2.iter()).zip(v2s.iter())
+                    {
+                        *c = p * valcos - pre.der1[k1] * pre.der1[k2] * cur.val;
                     }
                 }
                 Cos => {
@@ -783,11 +856,12 @@ impl Expr {
                     cur.val = pre.val.cos();
                     let valsin = pre.val.sin();
                     for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
-                        *c = -p*valsin;
+                        *c = -p * valsin;
                     }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(v2s.iter()) {
-                        *c = -p*valsin - pre.der1[k1]*pre.der1[k2]*cur.val;
+                    for ((c, p), &(k1, k2)) in
+                        cur.der2.iter_mut().zip(pre.der2.iter()).zip(v2s.iter())
+                    {
+                        *c = -p * valsin - pre.der1[k1] * pre.der1[k2] * cur.val;
                     }
                 }
                 Sum(ref js) => {
@@ -804,8 +878,7 @@ impl Expr {
                     }
                     for &j in js {
                         let oth = &left[i - j];
-                        for (c, o) in cur.der1.iter_mut()
-                                      .zip(oth.der1.iter()) {
+                        for (c, o) in cur.der1.iter_mut().zip(oth.der1.iter()) {
                             *c += *o;
                         }
                     }
@@ -815,8 +888,7 @@ impl Expr {
                     }
                     for &j in js {
                         let oth = &left[i - j];
-                        for (c, o) in cur.der2.iter_mut()
-                                      .zip(oth.der2.iter()) {
+                        for (c, o) in cur.der2.iter_mut().zip(oth.der2.iter()) {
                             *c += *o;
                         }
                     }
@@ -837,14 +909,14 @@ impl Expr {
                 }
                 Square => {
                     let pre = &left[i - 1];
-                    cur.val = pre.val*pre.val;
-                    for (c, p) in cur.der1.iter_mut()
-                            .zip(pre.der1.iter()) {
-                        *c = 2.0*p*pre.val;
+                    cur.val = pre.val * pre.val;
+                    for (c, p) in cur.der1.iter_mut().zip(pre.der1.iter()) {
+                        *c = 2.0 * p * pre.val;
                     }
-                    for ((c, p), &(k1, k2)) in cur.der2.iter_mut()
-                            .zip(pre.der2.iter()).zip(v2s.iter()) {
-                        *c = 2.0*p*pre.val + 2.0*pre.der1[k1]*pre.der1[k2];
+                    for ((c, p), &(k1, k2)) in
+                        cur.der2.iter_mut().zip(pre.der2.iter()).zip(v2s.iter())
+                    {
+                        *c = 2.0 * p * pre.val + 2.0 * pre.der1[k1] * pre.der1[k2];
                     }
                 }
                 Variable(Var(id)) => {
@@ -883,9 +955,9 @@ impl Expr {
     ///
     /// `v1s` and `vl2s` must be same length.
     #[cfg(test)]
-    fn full_fwd_rev<R>(&self, v1s: &[ID], vl2s: &[Vec<ID>],
-                    ret: &R, ws: &mut WorkSpace) -> Column
-    where R: Retrieve,
+    fn full_fwd_rev<R>(&self, v1s: &[ID], vl2s: &[Vec<ID>], ret: &R, ws: &mut WorkSpace) -> Column
+    where
+        R: Retrieve,
     {
         let mut col = Column::new();
 
@@ -894,9 +966,14 @@ impl Expr {
         for (&id, oids) in v1s.iter().zip(vl2s.iter()) {
             if !oids.is_empty() {
                 col.der1.push(self.der1_fwd(id, &ws.ns, &mut ws.nds));
-                col.der2.append(&mut self.der2_rev(oids, &ws.ns, &ws.nds, 
-                                                   &mut ws.na1s, &mut ws.na2s,
-                                                   &mut ws.ids));
+                col.der2.append(&mut self.der2_rev(
+                    oids,
+                    &ws.ns,
+                    &ws.nds,
+                    &mut ws.na1s,
+                    &mut ws.na2s,
+                    &mut ws.ids,
+                ));
             }
         }
         // Check if all first derivatives were calculated, and if not just use
@@ -904,7 +981,7 @@ impl Expr {
         if col.der1.len() < v1s.len() {
             col.der1 = self.der1_rev(v1s, &ws.ns, &mut ws.na1s, &mut ws.ids);
         }
-        
+
         col
     }
 
@@ -914,22 +991,23 @@ impl Expr {
     /// variables and parameters present in the expression. Likewise the
     /// `ExprInfo` should be for the actual expression, and up to date.
     ///
-    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
+    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub(crate) fn auto_const<R>(&self, info: &ExprInfo, store: &R,
-                             ws: &mut WorkSpace) -> Column
-    where R: Retrieve,
+    pub(crate) fn auto_const<R>(&self, info: &ExprInfo, store: &R, ws: &mut WorkSpace) -> Column
+    where
+        R: Retrieve,
     {
         let mut col = Column::new();
         if !info.lin.is_empty() {
             self.eval(store, &mut ws.ns);
-            col.der1 = self.der1_rev(&info.lin, &ws.ns, &mut ws.na1s,
-                                     &mut ws.ids);
+            col.der1 = self.der1_rev(&info.lin, &ws.ns, &mut ws.na1s, &mut ws.ids);
         }
         if !info.quad.is_empty() {
-            col.der2 = self.full_fwd(&info.nlin, &info.quad, store,
-                                     &mut ws.cols).der2.clone();
+            col.der2 = self
+                .full_fwd(&info.nlin, &info.quad, store, &mut ws.cols)
+                .der2
+                .clone();
             // If using this need to make sure expr has had set_lists() called
             //col.der2 = self.full_fwd_rev(&info.nlin, &info.quad_list, store,
             //                             ws).der2;
@@ -943,12 +1021,12 @@ impl Expr {
     /// variables and parameters present in the expression.  Likewise the
     /// `ExprInfo` should be for the actual expression, and up to date.
     ///
-    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and 
+    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub(crate) fn auto_dynam<R>(&self, info: &ExprInfo, store: &R,
-                             ws: &mut WorkSpace) -> Column
-    where R: Retrieve,
+    pub(crate) fn auto_dynam<R>(&self, info: &ExprInfo, store: &R, ws: &mut WorkSpace) -> Column
+    where
+        R: Retrieve,
     {
         if info.nlin.is_empty() {
             let mut col = Column::new();
@@ -957,11 +1035,11 @@ impl Expr {
         } else if info.nquad.is_empty() {
             let mut col = Column::new();
             col.val = self.eval(store, &mut ws.ns);
-            col.der1 = self.der1_rev(&info.nlin, &ws.ns, &mut ws.na1s,
-                                  &mut ws.ids);
+            col.der1 = self.der1_rev(&info.nlin, &ws.ns, &mut ws.na1s, &mut ws.ids);
             col
         } else {
-            self.full_fwd(&info.nlin, &info.nquad, store, &mut ws.cols).clone()
+            self.full_fwd(&info.nlin, &info.nquad, store, &mut ws.cols)
+                .clone()
             // If using this need to make sure expr has had set_lists() called
             //self.full_fwd_rev(&info.nlin, &info.nquad_list, store, ws);
         }
@@ -1346,7 +1424,7 @@ mod tests {
         let mut e = Expr::from(5.0);
         e = 5.0 + e;
         e = Var(0) + e;
-        e = e*Par(0);
+        e = e * Par(0);
         //println!("{:?}", e);
 
         let info = e.get_info();
@@ -1373,8 +1451,7 @@ mod tests {
         // Call on parameter change
         // Copy out and store first derivatives
         {
-            let col = e.full_fwd(&info.lin, &Vec::new(), &store,
-                &mut ws.cols);
+            let col = e.full_fwd(&info.lin, &Vec::new(), &store, &mut ws.cols);
             assert_eq!(col.val, 14.0);
             assert_eq!(col.der1[0], 1.0); // Var(0)
         }
@@ -1383,8 +1460,7 @@ mod tests {
         // Call on parameter change
         // Copy out and store second derivatives
         {
-            let col = e.full_fwd(&info.nlin, &info.quad, &store,
-                &mut ws.cols);
+            let col = e.full_fwd(&info.nlin, &info.quad, &store, &mut ws.cols);
             assert_eq!(col.val, 14.0);
             assert_eq!(col.der1[0], 6.0); // Var(1)
             assert_eq!(col.der2[0], 2.0); // Var(1), Var(1)
@@ -1393,8 +1469,7 @@ mod tests {
         // Get dynamic derivatives
         // Call every time
         {
-            let col = e.full_fwd(&info.nlin, &info.nquad, &store,
-                &mut ws.cols);
+            let col = e.full_fwd(&info.nlin, &info.nquad, &store, &mut ws.cols);
             assert_eq!(col.val, 14.0);
             assert_eq!(col.der1[0], 6.0); // Var(1)
         }
@@ -1410,14 +1485,17 @@ mod tests {
         let mut info = e.get_info();
         info.set_lists();
 
-        assert_eq!(info, ExprInfo {
-            lin: vec![0],
-            nlin: vec![1],
-            quad: vec![(0, 0)],
-            nquad: vec![],
-            quad_list: vec![vec![1]],
-            nquad_list: vec![vec![]],
-        }); 
+        assert_eq!(
+            info,
+            ExprInfo {
+                lin: vec![0],
+                nlin: vec![1],
+                quad: vec![(0, 0)],
+                nquad: vec![],
+                quad_list: vec![vec![1]],
+                nquad_list: vec![vec![]],
+            }
+        );
     }
 
     #[test]
@@ -1461,7 +1539,7 @@ mod tests {
 
         let mut ws = WorkSpace::new();
 
-        let e = (2.0*Var(0)).sin();
+        let e = (2.0 * Var(0)).sin();
         let info = e.get_info();
         //println!("{:?}", f);
         //println!("{:?}", info);
@@ -1471,8 +1549,8 @@ mod tests {
         let col = e.full_fwd(&info.nlin, &info.nquad, &store, &mut ws.cols);
 
         assert_eq!(col.val, 10.0_f64.sin());
-        assert_eq!(col.der1[0], 2.0*(10.0_f64.cos()));
-        assert_eq!(col.der2[0], -4.0*(10.0_f64.sin()));
+        assert_eq!(col.der1[0], 2.0 * (10.0_f64.cos()));
+        assert_eq!(col.der2[0], -4.0 * (10.0_f64.sin()));
     }
 
     #[test]
@@ -1482,7 +1560,7 @@ mod tests {
 
         let mut ws = WorkSpace::new();
 
-        let e = (2.0*Var(0)).cos();
+        let e = (2.0 * Var(0)).cos();
         let info = e.get_info();
         //println!("{:?}", f);
         //println!("{:?}", info);
@@ -1492,8 +1570,8 @@ mod tests {
         let col = e.full_fwd(&info.nlin, &info.nquad, &store, &mut ws.cols);
 
         assert_eq!(col.val, 10.0_f64.cos());
-        assert_eq!(col.der1[0], -2.0*(10.0_f64.sin()));
-        assert_eq!(col.der2[0], -4.0*(10.0_f64.cos()));
+        assert_eq!(col.der1[0], -2.0 * (10.0_f64.sin()));
+        assert_eq!(col.der2[0], -4.0 * (10.0_f64.cos()));
     }
 
     #[test]
@@ -1505,7 +1583,7 @@ mod tests {
         let x1 = Var(0);
         let x2 = Var(1);
 
-        let e = x1*x2 + x1.sin();
+        let e = x1 * x2 + x1.sin();
         let mut ws = WorkSpace::new();
         //let info = e.get_info();
         //println!("{:?}", e);
@@ -1527,17 +1605,15 @@ mod tests {
         let x1 = Var(0);
         let x2 = Var(1);
 
-        let e = x1*x2 + x1.sin();
+        let e = x1 * x2 + x1.sin();
         let mut ws = WorkSpace::new();
         let mut info = e.get_info();
         info.set_lists();
         //println!("{:?}", e);
         //println!("{:?}", info);
         e.eval(&store, &mut ws.ns);
-        let quad_col = e.full_fwd_rev(&info.nlin, &info.quad_list,
-                                      &store, &mut ws);
-        let nquad_col = e.full_fwd_rev(&info.nlin, &info.nquad_list,
-                                       &store, &mut ws);
+        let quad_col = e.full_fwd_rev(&info.nlin, &info.quad_list, &store, &mut ws);
+        let nquad_col = e.full_fwd_rev(&info.nlin, &info.nquad_list, &store, &mut ws);
 
         assert_eq!(quad_col.val, 20.0 + 5.0_f64.sin());
         assert_eq!(quad_col.der1.len(), 2);
@@ -1564,7 +1640,7 @@ mod tests {
         }
         let mut e = Expr::from(0.0);
         for &x in &xs {
-            e = e + 3.0*(x - 1.0).powi(2) + 5.0;
+            e = e + 3.0 * (x - 1.0).powi(2) + 5.0;
         }
         let mut ws = WorkSpace::new();
         //println!("{:?}", e);
@@ -1586,7 +1662,7 @@ mod tests {
         }
         let mut e = Expr::from(0.0);
         for &x in &xs {
-            e = e + 3.0*(x - 1.0).powi(2) + 5.0;
+            e = e + 3.0 * (x - 1.0).powi(2) + 5.0;
         }
         let mut ws = WorkSpace::new();
         //println!("{:?}", e);

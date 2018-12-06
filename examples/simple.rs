@@ -1,9 +1,8 @@
 extern crate descent;
 
+use descent::ipopt_model::IpoptModel;
+use descent::model::Model;
 use std::f64::{INFINITY as INF, NEG_INFINITY as NINF};
-use descent::ipopt_model::{IpoptModel};
-use descent::model::{Model};
-
 
 fn main() {
     // We want to solve the problem:
@@ -26,7 +25,7 @@ fn main() {
 
     // Set the objective value by passing an expression (in this case making
     // use of the parameter):
-    m.set_obj(p*y);
+    m.set_obj(p * y);
 
     // Constraints are added to the model by bringing the variables onto one
     // side of the inequality / equality, and setting constant lower and upper
@@ -35,7 +34,7 @@ fn main() {
     // to the same value if it is an equality constraint.
     //
     // Here x*x - x <= y becomes 0 <= y - x*x + x <= infinity:
-    m.add_con(y - x*x + x, 0.0, INF);
+    m.add_con(y - x * x + x, 0.0, INF);
 
     // Solve it:
     let (stat, sol) = m.solve();
@@ -62,6 +61,6 @@ fn main() {
     }
 
     // Build and run this example like so:
-    // cargo build --release --example simple 
+    // cargo build --release --example simple
     // ./target/release/examples/simple
 }

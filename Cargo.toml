@@ -8,6 +8,7 @@ categories = ["science"]
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
 repository = "https://gitlab.com/pscott/descent"
+edition = "2018"
 
 [dependencies]
 libc = "0.2"
@@ -15,3 +16,14 @@ fnv = "1.0"
 
 [profile.release]
 #debug = 2
+
+[[example]]
+name = "problem"
+path = "examples/problem.rs"
+
+[[example]]
+name = "problem_macro"
+path = "examples/problem_macro.rs"
+
+[dependencies.descent_macro]
+path = "./descent_macro"

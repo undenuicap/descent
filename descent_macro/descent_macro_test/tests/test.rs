@@ -1,7 +1,7 @@
 #![feature(proc_macro_hygiene)]
 
-use descent_macro::expr;
 use descent::expr::Store;
+use descent_macro::expr;
 
 #[test]
 fn it_works() {
@@ -40,7 +40,12 @@ fn it_works() {
     let mut d1_out = vec![0.0, 0.0];
     let mut d2_out = vec![0.0];
 
-    let v = (ex.all)(s.vars.as_slice(), s.pars.as_slice(), &mut d1_out, &mut d2_out);
+    let v = (ex.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
     assert!(v == -20.0);
     assert!(d1_out[0] == 20.0);
     assert!(d1_out[1] == -10.0);

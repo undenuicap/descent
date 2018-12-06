@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use expr::{Expr, Store, ID, Var, Par, Retrieve};
+use crate::expr::{Expr, Expression, Par, Retrieve, Store, Var, ID};
 
 //pub enum VarType {
 //    Continuous,
@@ -20,13 +20,12 @@ pub struct Con(pub ID); // Constraint ID
 pub trait Model {
     fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var;
     fn add_par(&mut self, val: f64) -> Par;
-    fn add_con(&mut self, expr: Expr, lb: f64, ub: f64) -> Con;
-    fn set_obj(&mut self, expr: Expr);
+    fn add_con<E: Into<Expression>>(&mut self, expr: E, lb: f64, ub: f64) -> Con;
+    fn set_obj<E: Into<Expression>>(&mut self, expr: E);
     fn set_par(&mut self, par: Par, val: f64);
     fn set_init(&mut self, var: Var, init: f64);
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>);
-    fn warm_solve(&mut self, sol: Solution) ->
-        (SolutionStatus, Option<Solution>);
+    fn warm_solve(&mut self, sol: Solution) -> (SolutionStatus, Option<Solution>);
 }
 
 // Not used yet
@@ -69,12 +68,12 @@ impl Solution {
     pub fn con_mult(&self, Con(cid): Con) -> f64 {
         self.con_mult[cid]
     }
-    
+
     // Could write versions that take Expr, and try and match ops[0] to Var
     pub fn var_lb_mult(&self, Var(vid): Var) -> f64 {
         self.var_lb_mult[vid]
     }
-    
+
     pub fn var_ub_mult(&self, Var(vid): Var) -> f64 {
         self.var_ub_mult[vid]
     }
