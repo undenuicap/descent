@@ -46,8 +46,7 @@ struct ModelData {
 
 #[derive(Debug, Default)]
 struct ModelCache {
-    j_sparsity: Vec<(usize, ID)>, // jacobian sparsity
-    h_sparsity: HesSparsity,      // hessian sparsity
+    sparsity: Sparsity, // jacobian and hessian sparsity
     ws: WorkSpace,
     cons_const: Vec<Column>,
     obj_const: Column,
@@ -123,27 +122,20 @@ impl IpoptModel {
 
         let mut g_lb: Vec<f64> = Vec::new();
         let mut g_ub: Vec<f64> = Vec::new();
-        let mut j_sparsity: Vec<(ID, ID)> = Vec::new();
-        let mut h_sparsity = HesSparsity::new();
+        let mut sparsity = Sparsity::new();
 
-        h_sparsity.add_obj(&self.model.obj.expr);
+        sparsity.add_obj(&self.model.obj.expr);
 
-        for (cid, c) in self.model.cons.iter().enumerate() {
+        for c in self.model.cons.iter() {
             g_lb.push(c.lb);
             g_ub.push(c.ub);
-            for v in c.expr.lin() {
-                j_sparsity.push((cid, v));
-            }
-            for v in c.expr.nlin() {
-                j_sparsity.push((cid, v));
-            }
-            h_sparsity.add_con(&c.expr);
+            sparsity.add_con(&c.expr);
         }
 
         let nvars = self.model.vars.len();
         let ncons = self.model.cons.len();
-        let nele_hes = h_sparsity.len();
-        let nele_jac = j_sparsity.len();
+        let nele_jac = sparsity.jac_len();
+        let nele_hes = sparsity.hes_len();
 
         // x_lb, x_ub, g_lb, g_ub are copied internally so don't need to keep
         let prob = unsafe {
@@ -171,8 +163,7 @@ impl IpoptModel {
         //unsafe { ipopt::SetIntermediateCallback(prob, intermediate) };
 
         let mut cache = ModelCache {
-            j_sparsity: j_sparsity,
-            h_sparsity: h_sparsity,
+            sparsity: sparsity,
             ..Default::default()
         };
         cache.cons.resize(ncons, Column::new());
@@ -331,64 +322,93 @@ impl IpoptModel {
 }
 
 #[derive(Debug, Default)]
-struct HesSparsity {
-    sp: FnvHashMap<(ID, ID), usize>,
-    cons_inds: Vec<Vec<usize>>,
-    obj_inds: Vec<usize>,
+struct Sparsity {
+    jac_sp: FnvHashMap<(usize, ID), usize>,
+    jac_cons_inds: Vec<Vec<usize>>,
+    hes_sp: FnvHashMap<(ID, ID), usize>,
+    hes_cons_inds: Vec<Vec<usize>>,
+    hes_obj_inds: Vec<usize>,
 }
 
-impl HesSparsity {
-    fn new() -> HesSparsity {
-        HesSparsity::default()
+impl Sparsity {
+    fn new() -> Sparsity {
+        Sparsity::default()
     }
 
-    fn get_index(&mut self, eid: (ID, ID)) -> usize {
-        let id = self.sp.len(); // incase need to create new
-        *self.sp.entry(eid).or_insert(id)
+    fn jac_index(&mut self, eid: (usize, ID)) -> usize {
+        let id = self.jac_sp.len(); // incase need to create new
+        *self.jac_sp.entry(eid).or_insert(id)
+    }
+
+    fn hes_index(&mut self, eid: (ID, ID)) -> usize {
+        let id = self.hes_sp.len(); // incase need to create new
+        *self.hes_sp.entry(eid).or_insert(id)
     }
 
     fn add_con(&mut self, expr: &Expression) {
-        let mut v = Vec::new();
+        let cid = self.jac_cons_inds.len();
+        let mut v_hes = Vec::new();
+        let mut v_jac = Vec::new();
         match expr {
             Expression::Expr(_, info) => {
-                v.extend(info.quad
-                    .iter()
-                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
-                v.extend(info.nquad
-                    .iter()
-                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
-            },
+                v_jac.extend(info.lin.iter().map(|i| self.jac_index((cid, *i))));
+                v_jac.extend(info.nlin.iter().map(|i| self.jac_index((cid, *i))));
+                v_hes.extend(
+                    info.quad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
+                );
+                v_hes.extend(
+                    info.nquad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
+                );
+            }
             Expression::ExprStatic(e) => {
-                v.extend(e.d2_sparsity
-                         .iter()
-                         .map(|(Var(v1), Var(v2))| self.get_index((*v1, *v2))));
-            },
+                v_jac.extend(e.d1_sparsity.iter().map(|Var(v)| self.jac_index((cid, *v))));
+                v_hes.extend(
+                    e.d2_sparsity
+                        .iter()
+                        .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
+                );
+            }
         }
-        self.cons_inds.push(v);
+        self.hes_cons_inds.push(v_hes);
+        self.jac_cons_inds.push(v_jac);
     }
 
     fn add_obj(&mut self, expr: &Expression) {
         let mut v = Vec::new();
         match expr {
             Expression::Expr(_, info) => {
-                v.extend(info.quad
-                    .iter()
-                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
-                v.extend(info.nquad
-                    .iter()
-                    .map(|(i, j)| self.get_index((info.nlin[*i], info.nlin[*j]))));
-            },
+                v.extend(
+                    info.quad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
+                );
+                v.extend(
+                    info.nquad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
+                );
+            }
             Expression::ExprStatic(e) => {
-                v.extend(e.d2_sparsity
-                         .iter()
-                         .map(|(Var(v1), Var(v2))| self.get_index((*v1, *v2))));
-            },
+                v.extend(
+                    e.d2_sparsity
+                        .iter()
+                        .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
+                );
+            }
         }
-        self.obj_inds = v;
+        self.hes_obj_inds = v;
     }
 
-    fn len(&self) -> usize {
-        self.sp.len()
+    fn jac_len(&self) -> usize {
+        self.jac_sp.len()
+    }
+
+    fn hes_len(&self) -> usize {
+        self.hes_sp.len()
     }
 }
 
@@ -654,7 +674,7 @@ extern "C" fn g_jac(
     if m != cb_data.model.cons.len() as i32 {
         return 0;
     }
-    if nele_jac != cb_data.cache.j_sparsity.len() as i32 {
+    if nele_jac != cb_data.cache.sparsity.jac_len() as i32 {
         return 0;
     }
 
@@ -662,9 +682,9 @@ extern "C" fn g_jac(
         // Set sparsity
         let row = unsafe { slice::from_raw_parts_mut(i_row, nele_jac as usize) };
         let col = unsafe { slice::from_raw_parts_mut(j_col, nele_jac as usize) };
-        for (i, &(cid, vid)) in cb_data.cache.j_sparsity.iter().enumerate() {
-            row[i] = cid as i32;
-            col[i] = vid as i32;
+        for (&(cid, vid), i) in cb_data.cache.sparsity.jac_sp.iter() {
+            row[*i] = cid as i32;
+            col[*i] = vid as i32;
         }
     } else {
         // Set values
@@ -682,35 +702,23 @@ extern "C" fn g_jac(
 
         let values = unsafe { slice::from_raw_parts_mut(vals, nele_jac as usize) };
 
-        ////println!("bef: {:?}", values);
-        //// Could have put all the constant derivatives in one great big vector,
-        //// and then just copy that chunk over.  Would require different
-        //// sparsity ordering.
-        //let mut vind = 0_usize;
-        //for (i, col) in cb_data.cache.cons.iter().enumerate() {
-        //    let sp = vind + cb_data.cache.cons_const[i].der1.len();
-        //    let ed = sp + col.der1.len();
-        //    values[vind..sp].copy_from_slice(&cb_data.cache.cons_const[i].der1);
-        //    values[sp..ed].copy_from_slice(&col.der1);
-        //    vind = ed;
-        //}
         for v in values.iter_mut() {
             *v = 0.0;
         }
 
         let cache = &cb_data.cache;
-        let mut con_offset = 0_usize;
-        for ((col, col_const), con) in cache.cons.iter().zip(cache.cons_const.iter()).zip(cb_data.model.cons.iter()) {
-            //for (i, val) in con.expr.lin().zip(col_const.der1.iter()) {
-            for (i, val) in col_const.der1.iter().enumerate() {
-                values[i + con_offset] += *val;
+        for ((col, col_const), inds) in cache
+            .cons
+            .iter()
+            .zip(cache.cons_const.iter())
+            .zip(cache.sparsity.jac_cons_inds.iter())
+        {
+            for (i, val) in inds
+                .iter()
+                .zip(col_const.der1.iter().chain(col.der1.iter()))
+            {
+                values[*i] += *val;
             }
-            con_offset += col_const.der1.len();
-            //for (i, val) in con.expr.nlin().zip(col.der1.iter()) {
-            for (i, val) in col.der1.iter().enumerate() {
-                values[i + con_offset] += *val;
-            }
-            con_offset += col.der1.len();
         }
         //println!("aft: {:?}", values);
     }
@@ -739,7 +747,7 @@ extern "C" fn l_hess(
     if m != cb_data.model.cons.len() as i32 {
         return 0;
     }
-    if nele_hes != cb_data.cache.h_sparsity.len() as i32 {
+    if nele_hes != cb_data.cache.sparsity.hes_len() as i32 {
         return 0;
     }
 
@@ -747,7 +755,7 @@ extern "C" fn l_hess(
         // Set sparsity
         let row = unsafe { slice::from_raw_parts_mut(i_row, nele_hes as usize) };
         let col = unsafe { slice::from_raw_parts_mut(j_col, nele_hes as usize) };
-        for (vids, &ind) in &cb_data.cache.h_sparsity.sp {
+        for (vids, &ind) in &cb_data.cache.sparsity.hes_sp {
             row[ind] = vids.0 as i32;
             col[ind] = vids.1 as i32;
         }
@@ -777,13 +785,13 @@ extern "C" fn l_hess(
 
         let mut ind_pos = 0;
         for v in &cb_data.cache.obj_const.der2 {
-            let vind = cb_data.cache.h_sparsity.obj_inds[ind_pos];
+            let vind = cb_data.cache.sparsity.hes_obj_inds[ind_pos];
             values[vind] += obj_factor * v;
             ind_pos += 1;
         }
 
         for v in &cb_data.cache.obj.der2 {
-            let vind = cb_data.cache.h_sparsity.obj_inds[ind_pos];
+            let vind = cb_data.cache.sparsity.hes_obj_inds[ind_pos];
             values[vind] += obj_factor * v;
             ind_pos += 1;
         }
@@ -792,17 +800,32 @@ extern "C" fn l_hess(
             ind_pos = 0;
 
             for v in &cb_data.cache.cons_const[i].der2 {
-                let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
+                let vind = cb_data.cache.sparsity.hes_cons_inds[i][ind_pos];
                 values[vind] += l * v;
                 ind_pos += 1;
             }
 
             for v in &cb_data.cache.cons[i].der2 {
-                let vind = cb_data.cache.h_sparsity.cons_inds[i][ind_pos];
+                let vind = cb_data.cache.sparsity.hes_cons_inds[i][ind_pos];
                 values[vind] += l * v;
                 ind_pos += 1;
             }
         }
+
+        //let cache = &cb_data.cache;
+        //for ((col, col_const), inds) in cache
+        //    .cons
+        //    .iter()
+        //    .zip(cache.cons_const.iter())
+        //    .zip(cache.sparsity.hes_cons_inds.iter())
+        //{
+        //    for (i, val) in inds
+        //        .iter()
+        //        .zip(col_const.der1.iter().chain(col.der1.iter()))
+        //    {
+        //        values[*i] += *val;
+        //    }
+        //}
         //println!("aft: {:?}", values);
     }
     1
