@@ -69,7 +69,7 @@ pub enum Expression {
     Expr(Expr, ExprInfo),
     ExprStatic(ExprStatic),
     //ExprSum(Vec<(Expr, ExprInfo)>), // in from, check if Sum, then break up
-    //ExprStaticSum(ExprStaticSum),
+    ExprStaticSum(ExprStaticSum),
 }
 
 // ExprStaticSum could be a compromise to allow dynamic addition of Static
@@ -91,7 +91,7 @@ impl Expression {
         match self {
             Expression::Expr(_, info) => Box::new(info.lin.iter().cloned()),
             Expression::ExprStatic(_) => Box::new(std::iter::empty()),
-            //Expression::ExprStaticSum(_) => Box::new(std::iter::empty()),
+            Expression::ExprStaticSum(_) => Box::new(std::iter::empty()),
         }
     }
 
@@ -99,6 +99,41 @@ impl Expression {
         match self {
             Expression::Expr(_, info) => Box::new(info.nlin.iter().cloned()),
             Expression::ExprStatic(e) => Box::new(e.d1_sparsity.iter().map(|Var(v)| *v)),
+            Expression::ExprStaticSum(es) => Box::new(
+                es.iter()
+                    .map(|e| e.d1_sparsity.iter().map(|Var(v)| *v))
+                    .flatten(),
+            ),
+        }
+    }
+
+    // Can count same variable twice if one of the summation types.
+    pub(crate) fn d1_nz(&self) -> usize {
+        match self {
+            Expression::Expr(_, info) => info.lin.len() + info.nlin.len(),
+            Expression::ExprStatic(e) => e.d1_sparsity.len(),
+            Expression::ExprStaticSum(es) => {
+                let mut count = 0;
+                for e in es {
+                    count += e.d1_sparsity.len();
+                }
+                count
+            }
+        }
+    }
+
+    // Can count same variable twice if one of the summation types.
+    pub(crate) fn d2_nz(&self) -> usize {
+        match self {
+            Expression::Expr(_, info) => info.quad.len() + info.nquad.len(),
+            Expression::ExprStatic(e) => e.d2_sparsity.len(),
+            Expression::ExprStaticSum(es) => {
+                let mut count = 0;
+                for e in es {
+                    count += e.d2_sparsity.len();
+                }
+                count
+            }
         }
     }
 }
@@ -113,6 +148,44 @@ impl From<Expr> for Expression {
 impl From<ExprStatic> for Expression {
     fn from(v: ExprStatic) -> Self {
         Expression::ExprStatic(v)
+    }
+}
+
+impl From<ExprStaticSum> for Expression {
+    fn from(v: ExprStaticSum) -> Self {
+        Expression::ExprStaticSum(v)
+    }
+}
+
+impl From<ExprStatic> for ExprStaticSum {
+    fn from(v: ExprStatic) -> Self {
+        vec![v]
+    }
+}
+
+impl std::ops::Add<ExprStatic> for ExprStatic {
+    type Output = ExprStaticSum;
+
+    fn add(self, other: ExprStatic) -> ExprStaticSum {
+        vec![self, other]
+    }
+}
+
+impl std::ops::Add<ExprStaticSum> for ExprStatic {
+    type Output = ExprStaticSum;
+
+    fn add(self, mut other: ExprStaticSum) -> ExprStaticSum {
+        other.push(self);
+        other
+    }
+}
+
+impl std::ops::Add<ExprStatic> for ExprStaticSum {
+    type Output = ExprStaticSum;
+
+    fn add(mut self, other: ExprStatic) -> ExprStaticSum {
+        self.push(other);
+        self
     }
 }
 

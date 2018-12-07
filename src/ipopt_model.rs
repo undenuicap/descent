@@ -163,24 +163,21 @@ impl IpoptModel {
         //unsafe { ipopt::SetIntermediateCallback(prob, intermediate) };
 
         let mut cache = ModelCache {
-            sparsity: sparsity,
+            sparsity,
             ..Default::default()
         };
         cache.cons.resize(ncons, Column::new());
 
         // Need to allocate memory for static expressions
-        if let Expression::ExprStatic(expr) = &self.model.obj.expr {
-            cache.obj.der1.resize(expr.d1_sparsity.len(), 0.0);
-            cache.obj.der2.resize(expr.d2_sparsity.len(), 0.0);
-        }
+        // Don't need this for Expr as done dynamically, but doing anyway
+        cache.obj.der1.resize(self.model.obj.expr.d1_nz(), 0.0);
+        cache.obj.der2.resize(self.model.obj.expr.d2_nz(), 0.0);
         for (cc, c) in cache.cons.iter_mut().zip(self.model.cons.iter()) {
-            if let Expression::ExprStatic(expr) = &c.expr {
-                cc.der1.resize(expr.d1_sparsity.len(), 0.0);
-                cc.der2.resize(expr.d2_sparsity.len(), 0.0);
-            }
+            cc.der1.resize(c.expr.d1_nz(), 0.0);
+            cc.der2.resize(c.expr.d2_nz(), 0.0);
         }
 
-        self.prob = Some(IpoptProblem { prob: prob });
+        self.prob = Some(IpoptProblem { prob });
         self.cache = Some(cache);
         self.prepared = true;
     }
@@ -275,7 +272,7 @@ impl IpoptModel {
 
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
-                    cache: cache,
+                    cache,
                     pars: &sol.store.pars,
                 };
 
@@ -372,6 +369,16 @@ impl Sparsity {
                         .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
                 );
             }
+            Expression::ExprStaticSum(es) => {
+                for e in es {
+                    v_jac.extend(e.d1_sparsity.iter().map(|Var(v)| self.jac_index((cid, *v))));
+                    v_hes.extend(
+                        e.d2_sparsity
+                            .iter()
+                            .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
+                    );
+                }
+            }
         }
         self.hes_cons_inds.push(v_hes);
         self.jac_cons_inds.push(v_jac);
@@ -398,6 +405,15 @@ impl Sparsity {
                         .iter()
                         .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
                 );
+            }
+            Expression::ExprStaticSum(es) => {
+                for e in es {
+                    v.extend(
+                        e.d2_sparsity
+                            .iter()
+                            .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
+                    );
+                }
             }
         }
         self.hes_obj_inds = v;
@@ -438,8 +454,8 @@ impl Model for IpoptModel {
         let id = self.model.cons.len();
         self.model.cons.push(Constraint {
             expr: expr.into(),
-            lb: lb,
-            ub: ub,
+            lb,
+            ub,
         });
         Con(id)
     }
@@ -507,6 +523,23 @@ fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
                 &mut cb_data.cache.obj.der2,
             );
         }
+        Expression::ExprStaticSum(es) => {
+            cb_data.cache.obj.val = 0.0;
+            let mut der1_off = 0;
+            let mut der2_off = 0;
+            for expr in es {
+                let d1_len = expr.d1_sparsity.len();
+                let d2_len = expr.d2_sparsity.len();
+                cb_data.cache.obj.val += (expr.all)(
+                    store.vars,
+                    store.pars,
+                    &mut cb_data.cache.obj.der1[der1_off..der1_off + d1_len],
+                    &mut cb_data.cache.obj.der2[der2_off..der2_off + d2_len],
+                );
+                der1_off += d1_len;
+                der2_off += d2_len;
+            }
+        }
     }
 }
 
@@ -519,6 +552,23 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
             }
             Expression::ExprStatic(expr) => {
                 cc.val = (expr.all)(store.vars, store.pars, &mut cc.der1, &mut cc.der2);
+            }
+            Expression::ExprStaticSum(es) => {
+                cc.val = 0.0;
+                let mut der1_off = 0;
+                let mut der2_off = 0;
+                for expr in es {
+                    let d1_len = expr.d1_sparsity.len();
+                    let d2_len = expr.d2_sparsity.len();
+                    cb_data.cache.obj.val += (expr.all)(
+                        store.vars,
+                        store.pars,
+                        &mut cc.der1[der1_off..der1_off + d1_len],
+                        &mut cc.der2[der2_off..der2_off + d2_len],
+                    );
+                    der1_off += d1_len;
+                    der2_off += d2_len;
+                }
             }
         }
     }
@@ -609,10 +659,10 @@ extern "C" fn f_grad(
 
     // f_grad expects variables in order
     for (i, v) in cb_data.model.obj.expr.lin().enumerate() {
-        values[v] = cb_data.cache.obj_const.der1[i];
+        values[v] += cb_data.cache.obj_const.der1[i];
     }
     for (i, v) in cb_data.model.obj.expr.nlin().enumerate() {
-        values[v] = cb_data.cache.obj.der1[i];
+        values[v] += cb_data.cache.obj.der1[i];
     }
     //println!("aft: {:?}", values);
     1
@@ -918,8 +968,8 @@ mod tests {
         m.set_obj(obj);
         for i in 0..(n - 2) {
             let a = ((i + 2) as f64) / (n as f64);
-            let e = (xs[i + 1].powi(2) + 1.5 * xs[i + 1] - a) * xs[i + 2].cos() - xs[i];
-            m.add_con(e, 0.0, 0.0);
+            let expr = (xs[i + 1].powi(2) + 1.5 * xs[i + 1] - a) * xs[i + 2].cos() - xs[i];
+            m.add_con(expr, 0.0, 0.0);
         }
         m.silence();
         b.iter(|| {
