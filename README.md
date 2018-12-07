@@ -68,6 +68,11 @@ Currently large expressions that require their second derivatives computed are
 slow and memory intensive. As a work around for separable expressions, split
 them up manually. In the future should be able to automate this.
 
+## TODO
+
+- Bonmin bindings (enabling MINLP).
+- Implement summation type for dynamic expressions.
+
 ## License
 
 Apache-2.0 or MIT

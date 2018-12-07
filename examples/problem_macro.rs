@@ -1,7 +1,7 @@
 // NumOps trait required to be in scope to use cos and powi
 #![feature(proc_macro_hygiene)]
 
-use descent::expr::{Expr, ExprStaticSum, NumOps};
+use descent::expr::ExprStaticSum;
 use descent::ipopt_model::IpoptModel;
 use descent::model::Model;
 use descent_macro::expr;
@@ -31,8 +31,8 @@ fn main() {
     //for &x in &xs {
     //    obj = obj + (x - 1.0).powi(2);
     //}
-    let mut obj: ExprStaticSum = expr!((x - 1.0) * (x - 1.0); x = xs[0]).into();
-    for &x in xs.iter().skip(1) {
+    let mut obj = ExprStaticSum::new();
+    for &x in xs.iter() {
         obj = obj + expr!((x - 1.0) * (x - 1.0); x);
     }
     //obj = (xs[0] - 1.0).powi(2);

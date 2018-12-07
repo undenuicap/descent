@@ -67,8 +67,8 @@ pub type ExprStaticSum = Vec<ExprStatic>;
 
 pub enum Expression {
     Expr(Expr, ExprInfo),
+    ExprSum(Vec<(Expr, ExprInfo)>),
     ExprStatic(ExprStatic),
-    //ExprSum(Vec<(Expr, ExprInfo)>), // in from, check if Sum, then break up
     ExprStaticSum(ExprStaticSum),
 }
 
@@ -90,6 +90,11 @@ impl Expression {
     pub(crate) fn lin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
         match self {
             Expression::Expr(_, info) => Box::new(info.lin.iter().cloned()),
+            Expression::ExprSum(es) => Box::new(
+                es.iter()
+                    .map(|(_, info)| info.lin.iter().cloned())
+                    .flatten(),
+            ),
             Expression::ExprStatic(_) => Box::new(std::iter::empty()),
             Expression::ExprStaticSum(_) => Box::new(std::iter::empty()),
         }
@@ -98,6 +103,11 @@ impl Expression {
     pub(crate) fn nlin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
         match self {
             Expression::Expr(_, info) => Box::new(info.nlin.iter().cloned()),
+            Expression::ExprSum(es) => Box::new(
+                es.iter()
+                    .map(|(_, info)| info.nlin.iter().cloned())
+                    .flatten(),
+            ),
             Expression::ExprStatic(e) => Box::new(e.d1_sparsity.iter().map(|Var(v)| *v)),
             Expression::ExprStaticSum(es) => Box::new(
                 es.iter()
@@ -111,6 +121,13 @@ impl Expression {
     pub(crate) fn d1_nz(&self) -> usize {
         match self {
             Expression::Expr(_, info) => info.lin.len() + info.nlin.len(),
+            Expression::ExprSum(es) => {
+                let mut count = 0;
+                for (_, info) in es {
+                    count += info.lin.len() + info.nlin.len();
+                }
+                count
+            }
             Expression::ExprStatic(e) => e.d1_sparsity.len(),
             Expression::ExprStaticSum(es) => {
                 let mut count = 0;
@@ -126,6 +143,13 @@ impl Expression {
     pub(crate) fn d2_nz(&self) -> usize {
         match self {
             Expression::Expr(_, info) => info.quad.len() + info.nquad.len(),
+            Expression::ExprSum(es) => {
+                let mut count = 0;
+                for (_, info) in es {
+                    count += info.quad.len() + info.nquad.len();
+                }
+                count
+            }
             Expression::ExprStatic(e) => e.d2_sparsity.len(),
             Expression::ExprStaticSum(es) => {
                 let mut count = 0;
@@ -140,8 +164,26 @@ impl Expression {
 
 impl From<Expr> for Expression {
     fn from(v: Expr) -> Self {
-        let info = v.get_info();
-        Expression::Expr(v, info)
+        if let Some(Oper::Sum(ref js)) = v.ops.last() {
+            if js.len() > 4 {
+                Expression::ExprSum(
+                    v.separate_sum()
+                        .expect("Misformed expression cannot be separated")
+                        .into_iter()
+                        .map(|e| {
+                            let info = e.get_info();
+                            (e, info)
+                        })
+                        .collect(),
+                )
+            } else {
+                let info = v.get_info();
+                Expression::Expr(v, info)
+            }
+        } else {
+            let info = v.get_info();
+            Expression::Expr(v, info)
+        }
     }
 }
 
@@ -413,6 +455,14 @@ pub(crate) struct Column {
 impl Column {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+}
+
+impl Column {
+    pub(crate) fn sum_concat(&mut self, other: Column) {
+        self.val += other.val;
+        self.der1.extend(other.der1.into_iter());
+        self.der2.extend(other.der2.into_iter());
     }
 }
 
@@ -1225,6 +1275,52 @@ impl Expr {
             }
         }
     }
+
+    /// Separate sum into vector of expressions.
+    fn separate_sum(self) -> Option<Vec<Expr>> {
+        let mut ops = self.ops;
+        if let Some(Oper::Sum(oref)) = ops.pop() {
+            let mut v = Vec::new();
+            while !ops.is_empty() {
+                let i = find_term_start(&ops);
+                v.push(Expr {
+                    ops: ops.drain(i..).collect(),
+                });
+            }
+            if oref.len() + 1 != v.len() {
+                panic!("Unexpected separation of sum operation");
+            }
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+
+/// Find left-most index of a separable term at end of slice of operands.
+fn find_term_start(ops: &[Oper]) -> usize {
+    if ops.is_empty() {
+        0
+    } else {
+        let i: usize = ops.len() - 1;
+        match ops[i] {
+            Oper::Add(j) | Oper::Sub(j) | Oper::Mul(j) => std::cmp::min(
+                find_term_start(&ops[..i]),
+                find_term_start(&ops[..i + 1 - j]),
+            ),
+            Oper::Neg | Oper::Pow(_) | Oper::Sin | Oper::Cos | Oper::Square => {
+                find_term_start(&ops[..i])
+            }
+            Oper::Variable(_) | Oper::Parameter(_) | Oper::Float(_) => i,
+            Oper::Sum(ref js) => {
+                let mut k = find_term_start(&ops[..i]);
+                for &j in js {
+                    k = std::cmp::min(k, find_term_start(&ops[..i + 1 - j]));
+                }
+                k
+            }
+        }
+    }
 }
 
 impl From<Var> for Expr {
@@ -1719,6 +1815,30 @@ mod tests {
         assert_eq!(nquad_col.der1[1], 5.0);
         assert_eq!(nquad_col.der2.len(), 1); // quad
         assert_eq!(nquad_col.der2[0], -5.0_f64.sin());
+    }
+
+    #[test]
+    fn separation() {
+        let vars: Vec<_> = (0..6).into_iter().map(|i| Var(i)).collect();
+        let mut store = Store::new();
+        for _ in &vars {
+            store.vars.push(3.0);
+        }
+        let mut ws = WorkSpace::new();
+
+        let mut obj = (vars[0] - 1.0).powi(2);
+        for v in vars.iter().skip(1) {
+            obj = obj + (*v - 1.0).powi(2);
+        }
+        let e: Expression = obj.into();
+        if let Expression::ExprSum(es) = e {
+            for (e, info) in es {
+                assert!(info.nlin.len() == 1);
+                assert!(e.eval(&store, &mut ws.ns) == 4.0);
+            }
+        } else {
+            panic!("Didn't get a ExprSum when expected");
+        }
     }
 
     #[bench]

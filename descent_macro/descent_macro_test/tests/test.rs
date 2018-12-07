@@ -13,7 +13,7 @@ fn it_works() {
     let k = s.add_par(20.0);
 
     let vars = vec![x, y];
-    let ex = expr!(x - y * b; x = vars[1], y = vars[0];); // switching vars
+    let ex = expr!(x - y * b; x = vars[1], y = vars[0]); // switching vars
     assert!(ex.d1_sparsity[0] == y);
     assert!(ex.d1_sparsity[1] == x);
 
