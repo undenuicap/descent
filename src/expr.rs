@@ -63,11 +63,13 @@ pub struct Var(pub ID);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Par(pub ID);
 
+pub type ExprStaticSum = Vec<ExprStatic>;
+
 pub enum Expression {
     Expr(Expr, ExprInfo),
     ExprStatic(ExprStatic),
     //ExprSum(Vec<(Expr, ExprInfo)>), // in from, check if Sum, then break up
-    //ExprStaticSum(Vec<ExprStatic>), // probably need a ExprStaticSum struct
+    //ExprStaticSum(ExprStaticSum),
 }
 
 // ExprStaticSum could be a compromise to allow dynamic addition of Static
@@ -89,6 +91,7 @@ impl Expression {
         match self {
             Expression::Expr(_, info) => Box::new(info.lin.iter().cloned()),
             Expression::ExprStatic(_) => Box::new(std::iter::empty()),
+            //Expression::ExprStaticSum(_) => Box::new(std::iter::empty()),
         }
     }
 

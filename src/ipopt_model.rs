@@ -783,49 +783,30 @@ extern "C" fn l_hess(
             *v = 0.0;
         }
 
-        let mut ind_pos = 0;
-        for v in &cb_data.cache.obj_const.der2 {
-            let vind = cb_data.cache.sparsity.hes_obj_inds[ind_pos];
-            values[vind] += obj_factor * v;
-            ind_pos += 1;
+        let cache = &cb_data.cache;
+        for (i, val) in cache
+            .sparsity
+            .hes_obj_inds
+            .iter()
+            .zip(cache.obj_const.der2.iter().chain(cache.obj.der2.iter()))
+        {
+            values[*i] += obj_factor * val;
         }
 
-        for v in &cb_data.cache.obj.der2 {
-            let vind = cb_data.cache.sparsity.hes_obj_inds[ind_pos];
-            values[vind] += obj_factor * v;
-            ind_pos += 1;
-        }
-
-        for (i, l) in lam.iter().enumerate() {
-            ind_pos = 0;
-
-            for v in &cb_data.cache.cons_const[i].der2 {
-                let vind = cb_data.cache.sparsity.hes_cons_inds[i][ind_pos];
-                values[vind] += l * v;
-                ind_pos += 1;
-            }
-
-            for v in &cb_data.cache.cons[i].der2 {
-                let vind = cb_data.cache.sparsity.hes_cons_inds[i][ind_pos];
-                values[vind] += l * v;
-                ind_pos += 1;
+        for (((col, col_const), inds), l) in cache
+            .cons
+            .iter()
+            .zip(cache.cons_const.iter())
+            .zip(cache.sparsity.hes_cons_inds.iter())
+            .zip(lam.iter())
+        {
+            for (i, val) in inds
+                .iter()
+                .zip(col_const.der2.iter().chain(col.der2.iter()))
+            {
+                values[*i] += l * val;
             }
         }
-
-        //let cache = &cb_data.cache;
-        //for ((col, col_const), inds) in cache
-        //    .cons
-        //    .iter()
-        //    .zip(cache.cons_const.iter())
-        //    .zip(cache.sparsity.hes_cons_inds.iter())
-        //{
-        //    for (i, val) in inds
-        //        .iter()
-        //        .zip(col_const.der1.iter().chain(col.der1.iter()))
-        //    {
-        //        values[*i] += *val;
-        //    }
-        //}
         //println!("aft: {:?}", values);
     }
     1
