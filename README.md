@@ -5,6 +5,16 @@ library with first and second order automatic differentiation. Currently
 has an interface to to the non-linear solver
 [Ipopt](https://projects.coin-or.org/Ipopt).
 
+## Dependencies
+
+[Ipopt](https://projects.coin-or.org/Ipopt) (or
+[Bonmin](https://projects.coin-or.org/Bonmin)) must be separately installed
+before attempting to build as `descent_ipopt` links to the libipopt.so shared
+library.
+
+It has only been tested on linux, but presumably would also work on macos, and
+potentially on windows in the right environment.
+
 ## Example
 
 The following code shows how to solve the following simple problem in IPOPT:
@@ -78,16 +88,6 @@ A more complete example can be found in
 
 The library allows parameterisation of values and easy solver warmstarting to
 enable quick model adjustments and resolving.
-
-## Dependencies
-
-[Ipopt](https://projects.coin-or.org/Ipopt) (or
-[Bonmin](https://projects.coin-or.org/Bonmin)) must be separately installed
-before attempting to build as `descent_ipopt` links to the libipopt.so shared
-library.
-
-It has only been tested on linux, but presumably would also work on macos, and
-potentially on windows in the right environment.
 
 ## TODO
 
