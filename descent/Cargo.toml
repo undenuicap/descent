@@ -1,0 +1,11 @@
+[package]
+name = "descent"
+version = "0.2.0"
+authors = ["Paul Scott <paul.m.sco@gmail.com>"]
+description = "Modelling and automatic differentiation for constrained optimisation"
+keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
+categories = ["science"]
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+repository = "https://gitlab.com/pscott/descent"
+edition = "2018"

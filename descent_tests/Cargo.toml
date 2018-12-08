@@ -1,11 +1,9 @@
 [package]
-name = "descent_macro"
+name = "descent_tests"
 version = "0.1.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 edition = "2018"
 
-[lib]
-proc-macro = true
-
 [dev-dependencies]
 descent = { path = "../descent" }
+descent_macro = { path = "../descent_macro" }

@@ -1,0 +1,22 @@
+[package]
+name = "descent_ipopt"
+version = "0.1.0"
+authors = ["Paul Scott <paul.m.sco@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+libc = "0.2"
+fnv = "1.0"
+descent = { path = "../descent" }
+
+[dev-dependencies]
+descent_macro = { path = "../descent_macro" }
+
+[[example]]
+name = "problem"
+path = "examples/problem.rs"
+
+[[example]]
+name = "problem_macro"
+path = "examples/problem_macro.rs"
+

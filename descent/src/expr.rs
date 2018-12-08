@@ -87,7 +87,7 @@ pub enum Expression {
 // one of these summation types.
 
 impl Expression {
-    pub(crate) fn lin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+    pub fn lin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
         match self {
             Expression::Expr(_, info) => Box::new(info.lin.iter().cloned()),
             Expression::ExprSum(es) => Box::new(
@@ -100,7 +100,7 @@ impl Expression {
         }
     }
 
-    pub(crate) fn nlin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+    pub fn nlin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
         match self {
             Expression::Expr(_, info) => Box::new(info.nlin.iter().cloned()),
             Expression::ExprSum(es) => Box::new(
@@ -118,7 +118,7 @@ impl Expression {
     }
 
     // Can count same variable twice if one of the summation types.
-    pub(crate) fn d1_nz(&self) -> usize {
+    pub fn d1_nz(&self) -> usize {
         match self {
             Expression::Expr(_, info) => info.lin.len() + info.nlin.len(),
             Expression::ExprSum(es) => {
@@ -140,7 +140,7 @@ impl Expression {
     }
 
     // Can count same variable twice if one of the summation types.
-    pub(crate) fn d2_nz(&self) -> usize {
+    pub fn d2_nz(&self) -> usize {
         match self {
             Expression::Expr(_, info) => info.quad.len() + info.nquad.len(),
             Expression::ExprSum(es) => {
@@ -446,20 +446,20 @@ enum Oper {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Column {
-    pub(crate) val: f64,
-    pub(crate) der1: Vec<f64>,
-    pub(crate) der2: Vec<f64>,
+pub struct Column {
+    pub val: f64,
+    pub der1: Vec<f64>,
+    pub der2: Vec<f64>,
 }
 
 impl Column {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 }
 
 impl Column {
-    pub(crate) fn sum_concat(&mut self, other: Column) {
+    pub fn sum_concat(&mut self, other: Column) {
         self.val += other.val;
         self.der1.extend(other.der1.into_iter());
         self.der2.extend(other.der2.into_iter());
@@ -470,13 +470,13 @@ impl Column {
 ///
 /// Used to save on allocations with many repeated calls.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct WorkSpace {
-    pub(crate) cols: Vec<Column>,
-    pub(crate) ns: Vec<f64>,
-    pub(crate) nds: Vec<f64>,
-    pub(crate) na1s: Vec<f64>,
-    pub(crate) na2s: Vec<f64>,
-    pub(crate) ids: HashMap<ID, f64>,
+pub struct WorkSpace {
+    pub cols: Vec<Column>,
+    pub ns: Vec<f64>,
+    pub nds: Vec<f64>,
+    pub na1s: Vec<f64>,
+    pub na2s: Vec<f64>,
+    pub ids: HashMap<ID, f64>,
 }
 
 impl WorkSpace {
@@ -496,15 +496,15 @@ impl WorkSpace {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExprInfo {
     /// Constant first derivative
-    pub(crate) lin: Vec<ID>,
+    pub lin: Vec<ID>,
     /// Non-constant first derivative
-    pub(crate) nlin: Vec<ID>,
+    pub nlin: Vec<ID>,
     /// Constant second derivative
-    pub(crate) quad: Vec<(usize, usize)>,
+    pub quad: Vec<(usize, usize)>,
     /// Non-constant second derivative
-    pub(crate) nquad: Vec<(usize, usize)>,
-    pub(crate) quad_list: Vec<Vec<ID>>,
-    pub(crate) nquad_list: Vec<Vec<ID>>,
+    pub nquad: Vec<(usize, usize)>,
+    pub quad_list: Vec<Vec<ID>>,
+    pub nquad_list: Vec<Vec<ID>>,
 }
 
 ///// Only really care about this for second derivatives. Can just call reverse
@@ -535,7 +535,7 @@ fn nlin_list(nlin: &[ID], sec: &[(usize, usize)]) -> Vec<Vec<ID>> {
 }
 
 impl ExprInfo {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
@@ -576,7 +576,7 @@ pub struct Expr {
 
 impl Expr {
     /// Value of the expression.
-    pub(crate) fn eval<R>(&self, ret: &R, ns: &mut Vec<f64>) -> f64
+    pub fn eval<R>(&self, ret: &R, ns: &mut Vec<f64>) -> f64
     where
         R: Retrieve,
     {
@@ -1136,7 +1136,7 @@ impl Expr {
     /// Should consider adding `ExprInfo` to `Expr`. Make it an option and
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub(crate) fn auto_const<R>(&self, info: &ExprInfo, store: &R, ws: &mut WorkSpace) -> Column
+    pub fn auto_const<R>(&self, info: &ExprInfo, store: &R, ws: &mut WorkSpace) -> Column
     where
         R: Retrieve,
     {
@@ -1166,7 +1166,7 @@ impl Expr {
     /// Should consider adding `ExprInfo` to `Expr`. Make it an option and
     /// call it on demand.  Might have to have some internal state to track
     /// if Expr has been changed and this needs to be called again.
-    pub(crate) fn auto_dynam<R>(&self, info: &ExprInfo, store: &R, ws: &mut WorkSpace) -> Column
+    pub fn auto_dynam<R>(&self, info: &ExprInfo, store: &R, ws: &mut WorkSpace) -> Column
     where
         R: Retrieve,
     {
@@ -1203,7 +1203,7 @@ impl Expr {
     //}
 
     /// Get information about the expression.
-    pub(crate) fn get_info(&self) -> ExprInfo {
+    pub fn get_info(&self) -> ExprInfo {
         use self::Oper::*;
         use self::Var;
         let mut degs: Vec<Degree> = Vec::new();
@@ -1243,7 +1243,7 @@ impl Expr {
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.ops.len()
     }
 

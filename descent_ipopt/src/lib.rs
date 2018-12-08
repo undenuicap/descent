@@ -6,12 +6,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::expr::{Column, Expr, Expression, Retrieve, WorkSpace};
-use crate::expr::{Par, Var, ID};
-use crate::ipopt;
-use crate::model::{Con, Model, Solution, SolutionStatus};
+#![feature(test)]
+
+mod ipopt;
+
+use descent::expr::{Column, Expr, Expression, Retrieve, WorkSpace};
+use descent::expr::{Par, Var, ID};
+use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
-//use std::collections::HashMap;
 use fnv::FnvHashMap;
 use std::f64;
 use std::ffi::CString;
@@ -325,7 +327,7 @@ impl IpoptModel {
             //         );
             // Should probably save ipopt_status to self
             use crate::ipopt::ApplicationReturnStatus as ARS;
-            use crate::model::SolutionStatus as SS;
+            use descent::model::SolutionStatus as SS;
             let status = match ipopt_status {
                 ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel => SS::Solved,
                 ARS::InfeasibleProblemDetected => SS::Infeasible,
@@ -942,7 +944,7 @@ extern "C" fn l_hess(
 mod tests {
     extern crate test;
     use super::*;
-    use crate::expr::NumOps;
+    use descent::expr::NumOps;
     #[test]
     fn univar_problem() {
         let mut m = IpoptModel::new();

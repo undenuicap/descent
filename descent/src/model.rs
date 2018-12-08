@@ -45,10 +45,10 @@ pub enum SolutionStatus {
 #[derive(Default)]
 pub struct Solution {
     pub obj_val: f64,
-    pub(crate) store: Store,
-    pub(crate) con_mult: Vec<f64>,
-    pub(crate) var_lb_mult: Vec<f64>,
-    pub(crate) var_ub_mult: Vec<f64>,
+    pub store: Store,
+    pub con_mult: Vec<f64>,
+    pub var_lb_mult: Vec<f64>,
+    pub var_ub_mult: Vec<f64>,
 }
 
 impl Solution {

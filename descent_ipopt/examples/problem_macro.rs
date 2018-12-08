@@ -1,9 +1,17 @@
+// Copyright 2018 Paul Scott
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 // NumOps trait required to be in scope to use cos and powi
 #![feature(proc_macro_hygiene)]
 
 use descent::expr::ExprStaticSum;
-use descent::ipopt_model::IpoptModel;
 use descent::model::Model;
+use descent_ipopt::IpoptModel;
 use descent_macro::expr;
 
 fn main() {

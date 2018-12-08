@@ -1,3 +1,11 @@
+// Copyright 2018 Paul Scott
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #![feature(proc_macro_hygiene)]
 
 extern crate proc_macro;
@@ -508,12 +516,10 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 ///
 /// expr!(<expr>; var1 [= <expr>], ...[; par1 [= <expr>], ...])
 ///
-/// ```
 /// let x = Var(0);
 /// let y = Var(1);
 /// let a = Par(0);
 /// let e = expr!(a * x + y * y; x, y; a);
-/// ```
 ///
 /// Variables and parameters need to declared. Constants and other expressions
 /// are captured (moved) from the environment, similarly to a closure. There
@@ -524,26 +530,21 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 /// environment, to make it convenient to use variables and parameters that
 /// appear in more complex structures:
 ///
-/// ```
 /// let vars = [Var(0), Var(1)];
 /// let pars = [Par(0)];
 /// let e = expr!(a * x + y * y; x = vars[0], y = vars[1]; a = pars[0]);
-/// ```
 ///
 /// This avoids having to manually do a separate:
 ///
-/// ```
 /// let x = vars[0];
-/// ```
 ///
 /// This convenience currently hasn't been extended to constant terms. So we
 /// still need to do the following so we don't try to move the vector of
 /// constants multiple times:
-/// ```
+///
 /// let constant = vec![1.0, 2.0];
 /// let c = constant[0];
 /// let e = expr!(a * x + y * y + c; x, y; a);
-/// ```
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
     let invalid_ident = ["__v", "__p", "__d1", "__d2"].iter().cloned().collect();
