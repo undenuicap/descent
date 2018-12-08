@@ -8,7 +8,7 @@ has an interface to to the non-linear solver
 ## Example
 
 The following code shows how to solve the following simple problem in IPOPT:
-min 2 y s.t. y >= x * x - x, x in \[-10, 10\].
+`min 2 y s.t. y >= x * x - x, x in [-10, 10]`.
 
 ```rust
 use descent::model::Model;
@@ -37,8 +37,8 @@ build option when testing your code for performance.
 
 ## Modelling
 
-The operators `+, -, *, .powi(i32), .sin(), .cos()` are supported in
-mathematical expressions. Expressions can be generated either via operator
+The operators `+`, `-`, `*`, `.powi(i32)`, `.sin()`, and `.cos()` are supported
+in mathematical expressions. Expressions can be generated either via operator
 overloading or with a procedural macro (requires nightly rust).
 
 ### Automatic Differentiation via Operator Overloading
@@ -83,20 +83,11 @@ enable quick model adjustments and resolving.
 
 [Ipopt](https://projects.coin-or.org/Ipopt) (or
 [Bonmin](https://projects.coin-or.org/Bonmin)) must be separately installed
-before attempting to build as Descent links to the libipopt.so shared library.
+before attempting to build as `descent_ipopt` links to the libipopt.so shared
+library.
 
 It has only been tested on linux, but presumably would also work on macos, and
 potentially on windows in the right environment.
-
-## Benchmarking
-
-For the test problem debug for the release profile should be turned on (in
-Cargo.toml), and then build and run using:
-
-```
-cargo build --release --example problem
-./target/release/examples/problem
-```
 
 ## TODO
 
