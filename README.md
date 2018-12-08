@@ -1,8 +1,8 @@
 # Descent
 
 A non-linear constrained optimisation (mathematical programming) modelling
-library with first and second order automatic differentiation. Currently
-has an interface to to the non-linear solver
+library with first and second order automatic differentiation / source-code
+symbolic differentiation. Currently has an interface to the non-linear solver
 [Ipopt](https://projects.coin-or.org/Ipopt).
 
 ## Dependencies
