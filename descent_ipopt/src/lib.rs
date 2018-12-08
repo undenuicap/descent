@@ -73,6 +73,7 @@ impl Drop for IpoptProblem {
     }
 }
 
+/// IPOPT model / solver.
 pub struct IpoptModel {
     model: ModelData,
     cache: Option<ModelCache>,
@@ -184,8 +185,10 @@ impl IpoptModel {
         self.prepared = true;
     }
 
-    // Options can only be set once model is prepared.
-    // They will be lost if the model is modified.
+    /// Set an IPOPT string option.
+    ///
+    /// Options can only be set once model is prepared. They will be lost if
+    /// the model is modified.
     pub fn set_str_option(&mut self, key: &str, val: &str) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
@@ -199,6 +202,10 @@ impl IpoptModel {
         }
     }
 
+    /// Set an IPOPT numerical option.
+    ///
+    /// Options can only be set once model is prepared. They will be lost if
+    /// the model is modified.
     pub fn set_num_option(&mut self, key: &str, val: f64) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
@@ -211,6 +218,10 @@ impl IpoptModel {
         }
     }
 
+    /// Set an IPOPT integer option.
+    ///
+    /// Options can only be set once model is prepared. They will be lost if
+    /// the model is modified.
     pub fn set_int_option(&mut self, key: &str, val: i32) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
@@ -223,7 +234,10 @@ impl IpoptModel {
         }
     }
 
-    // As it uses options above, will only last as long as model stays prepared
+    /// Silence the IPOPT default output.
+    ///
+    /// Options can only be set once model is prepared. They will be lost if
+    /// the model is modified.
     pub fn silence(&mut self) -> bool {
         self.set_str_option("sb", "yes") && self.set_int_option("print_level", 0)
     }

@@ -2,6 +2,11 @@
 name = "descent_tests"
 version = "0.1.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
+description = "Descent integration tests"
+keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
+categories = ["science"]
+license = "Apache-2.0 OR MIT"
+repository = "https://gitlab.com/pscott/descent"
 edition = "2018"
 
 [dev-dependencies]

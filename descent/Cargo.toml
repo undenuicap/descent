@@ -6,6 +6,6 @@ description = "Modelling and automatic differentiation for constrained optimisat
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
 categories = ["science"]
 license = "Apache-2.0 OR MIT"
-readme = "README.md"
 repository = "https://gitlab.com/pscott/descent"
+readme = "README.md"
 edition = "2018"

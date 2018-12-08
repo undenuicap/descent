@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Mul, Sub};
 
+/// Identifier used for variables and parameters.
 pub type ID = usize;
 
 /// Retrieve current values of variables and parameters.
@@ -20,7 +21,6 @@ pub trait Retrieve {
 }
 
 /// Storage for variable and parameter values.
-/// Used for testing here and externally.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
     pub vars: Vec<f64>,
@@ -63,6 +63,10 @@ pub struct Var(pub ID);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Par(pub ID);
 
+/// Represents the sum of multiple static expressions.
+///
+/// This enables some more runtime flexibility without having to resort to a
+/// Expr.
 pub type ExprStaticSum = Vec<ExprStatic>;
 
 pub enum Expression {
@@ -244,12 +248,18 @@ impl std::ops::Add<ExprStatic> for ExprStaticSum {
 /// The input variable / parameter slices to these functions should be large
 /// enough to include the indices of the vars / pars for the expression.
 pub struct ExprStatic {
+    /// Evaluate expression.
     pub f: Box<Fn(&[f64], &[f64]) -> f64>,
+    /// Evaluate first derivative of expression.
     pub d1: Box<Fn(&[f64], &[f64], &mut [f64])>,
+    /// Evaluate second derivative of expression.
     pub d2: Box<Fn(&[f64], &[f64], &mut [f64])>,
+    /// Evaluate expression and its first and second derivatives in one go.
     pub all: Box<Fn(&[f64], &[f64], &mut [f64], &mut [f64]) -> f64>,
-    pub d1_sparsity: Vec<Var>,        // sparsity / order for d1 output
-    pub d2_sparsity: Vec<(Var, Var)>, // sparsity / order for d2 output
+    /// First derivate sparsity / order of outputs.
+    pub d1_sparsity: Vec<Var>,
+    /// Second derivate sparsity / order of outputs.
+    pub d2_sparsity: Vec<(Var, Var)>,
 }
 
 /// Order second derivative pairs.
@@ -445,6 +455,7 @@ enum Oper {
     Float(f64),
 }
 
+/// Storage for evaluation of an expression.
 #[derive(Debug, Clone, Default)]
 pub struct Column {
     pub val: f64,
@@ -1356,6 +1367,7 @@ impl From<i32> for Expr {
 }
 
 // Have to use trait because straight fn overloading not possible
+/// Trait for numerical overloading.
 pub trait NumOps {
     fn powi(self, p: i32) -> Expr;
     fn sin(self) -> Expr;

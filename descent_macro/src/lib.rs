@@ -512,14 +512,19 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
     false
 }
 
-/// Generate a ExprStatic expression
+/// Generate a ExprStatic expression.
 ///
-/// expr!(<expr>; var1 [= <expr>], ...[; par1 [= <expr>], ...])
+/// expr!(\<expr\>; var1 [= \<expr\>], ...[; par1 [= \<expr\>], ...])
 ///
+/// # Examples
+///
+/// ```ignore
+/// use descent::expr::{Var, Par, ExprStatic};
 /// let x = Var(0);
 /// let y = Var(1);
 /// let a = Par(0);
 /// let e = expr!(a * x + y * y; x, y; a);
+/// ```
 ///
 /// Variables and parameters need to declared. Constants and other expressions
 /// are captured (moved) from the environment, similarly to a closure. There
@@ -530,21 +535,27 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 /// environment, to make it convenient to use variables and parameters that
 /// appear in more complex structures:
 ///
+/// ```ignore
 /// let vars = [Var(0), Var(1)];
 /// let pars = [Par(0)];
 /// let e = expr!(a * x + y * y; x = vars[0], y = vars[1]; a = pars[0]);
+/// ```
 ///
 /// This avoids having to manually do a separate:
 ///
+/// ```ignore
 /// let x = vars[0];
+/// ```
 ///
 /// This convenience currently hasn't been extended to constant terms. So we
 /// still need to do the following so we don't try to move the vector of
 /// constants multiple times:
 ///
+/// ```ignore
 /// let constant = vec![1.0, 2.0];
 /// let c = constant[0];
 /// let e = expr!(a * x + y * y + c; x, y; a);
+/// ```
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
     let invalid_ident = ["__v", "__p", "__d1", "__d2"].iter().cloned().collect();
