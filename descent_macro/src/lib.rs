@@ -14,7 +14,10 @@ use std::collections::HashSet;
 use std::iter::Peekable;
 use std::str::FromStr;
 
-fn separate_on_punct<I: IntoIterator<Item = TokenTree>>(input: I, pchar: char) -> Vec<Vec<TokenTree>> {
+fn separate_on_punct<I: IntoIterator<Item = TokenTree>>(
+    input: I,
+    pchar: char,
+) -> Vec<Vec<TokenTree>> {
     let mut split = vec![Vec::new()];
     for t in input {
         match t {
@@ -24,10 +27,10 @@ fn separate_on_punct<I: IntoIterator<Item = TokenTree>>(input: I, pchar: char) -
                 } else {
                     split.last_mut().unwrap().push(punct.into());
                 }
-            },
+            }
             t => {
                 split.last_mut().unwrap().push(t);
-            },
+            }
         };
     }
     split
@@ -53,7 +56,7 @@ fn prepare_idents<I: IntoIterator<Item = TokenTree>>(input: Vec<I>) -> IdenVec {
         };
         vec.push((key, rhs));
     }
-    vec 
+    vec
 }
 
 #[derive(Debug)]
@@ -136,66 +139,95 @@ impl Expr {
         match self {
             // doing a iden.0 to get usize from Var or Par
             Expr::Var(iden) => {
-                tokens.extend(TokenStream::from_str(&format!("__v[{}.0]", iden)).unwrap().into_iter());
-            },
+                tokens.extend(
+                    TokenStream::from_str(&format!("__v[{}.0]", iden))
+                        .unwrap()
+                        .into_iter(),
+                );
+            }
             Expr::Par(iden) => {
-                tokens.extend(TokenStream::from_str(&format!("__p[{}.0]", iden)).unwrap().into_iter());
-            },
+                tokens.extend(
+                    TokenStream::from_str(&format!("__p[{}.0]", iden))
+                        .unwrap()
+                        .into_iter(),
+                );
+            }
             Expr::Const(v) => {
                 tokens.push(TokenTree::Literal(Literal::f64_suffixed(v)));
-            },
+            }
             Expr::Tokens(t) => {
                 tokens.extend(t.into_iter());
-            },
+            }
             Expr::Add(l, r) => {
                 let mut child = Vec::new();
                 l.into_tokens(&mut child);
                 child.push(TokenTree::Punct(Punct::new('+', Spacing::Alone)));
                 r.into_tokens(&mut child);
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
             Expr::Sub(l, r) => {
                 let mut child = Vec::new();
                 l.into_tokens(&mut child);
                 child.push(TokenTree::Punct(Punct::new('-', Spacing::Alone)));
                 r.into_tokens(&mut child);
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
             Expr::Neg(v) => {
                 let mut child = Vec::new();
                 child.push(TokenTree::Punct(Punct::new('-', Spacing::Alone)));
                 v.into_tokens(&mut child);
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
             Expr::Mul(l, r) => {
                 let mut child = Vec::new();
                 l.into_tokens(&mut child);
                 child.push(TokenTree::Punct(Punct::new('*', Spacing::Alone)));
                 r.into_tokens(&mut child);
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
             Expr::Pow(v, e) => {
                 v.into_tokens(&mut tokens);
                 tokens.push(TokenTree::Punct(Punct::new('.', Spacing::Alone)));
                 tokens.push(TokenTree::Ident(Ident::new("powi", Span::call_site())));
                 let mut child = Vec::new();
                 child.push(TokenTree::Literal(Literal::i32_suffixed(e)));
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
             Expr::Cos(v) => {
                 v.into_tokens(&mut tokens);
                 tokens.push(TokenTree::Punct(Punct::new('.', Spacing::Alone)));
                 tokens.push(TokenTree::Ident(Ident::new("cos", Span::call_site())));
                 let child: Vec<TokenTree> = Vec::new();
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
             Expr::Sin(v) => {
                 v.into_tokens(&mut tokens);
                 tokens.push(TokenTree::Punct(Punct::new('.', Spacing::Alone)));
                 tokens.push(TokenTree::Ident(Ident::new("sin", Span::call_site())));
                 let child: Vec<TokenTree> = Vec::new();
-                tokens.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, child.into_iter().collect())));
-            },
+                tokens.push(TokenTree::Group(Group::new(
+                    Delimiter::Parenthesis,
+                    child.into_iter().collect(),
+                )));
+            }
         }
     }
 }
@@ -212,7 +244,7 @@ fn simplify(expr: Expr) -> Box<Expr> {
             } else {
                 Expr::Add(l, r)
             }
-        },
+        }
         Expr::Sub(l, r) => {
             if l.is_zero() {
                 *simplify(Expr::Neg(r))
@@ -223,14 +255,14 @@ fn simplify(expr: Expr) -> Box<Expr> {
             } else {
                 Expr::Sub(l, r)
             }
-        },
+        }
         Expr::Neg(v) => {
             if let Some(vv) = v.value() {
                 Expr::Const(-vv)
             } else {
                 Expr::Neg(v)
             }
-        },
+        }
         Expr::Mul(l, r) => {
             if l.is_zero() || r.is_zero() {
                 Expr::Const(0.0)
@@ -243,7 +275,7 @@ fn simplify(expr: Expr) -> Box<Expr> {
             } else {
                 Expr::Mul(l, r)
             }
-        },
+        }
         Expr::Pow(v, e) => {
             if let Some(vv) = v.value() {
                 Expr::Const(vv.powi(e))
@@ -254,21 +286,21 @@ fn simplify(expr: Expr) -> Box<Expr> {
                     e => Expr::Pow(v, e),
                 }
             }
-        },
+        }
         Expr::Cos(v) => {
             if v.is_zero() {
                 Expr::Const(1.0)
             } else {
                 Expr::Cos(v)
             }
-        },
+        }
         Expr::Sin(v) => {
             if v.is_zero() {
                 Expr::Const(0.0)
             } else {
                 Expr::Sin(v)
             }
-        },
+        }
         e => e,
     })
 }
@@ -281,30 +313,41 @@ fn deriv1(expr: &Expr, vid: &str) -> Box<Expr> {
             } else {
                 Expr::Const(0.0)
             }
-        },
+        }
         Expr::Par(_) | Expr::Const(_) | Expr::Tokens(_) => Expr::Const(0.0),
         Expr::Add(l, r) => Expr::Add(deriv1(l, vid), deriv1(r, vid)),
         Expr::Sub(l, r) => Expr::Sub(deriv1(l, vid), deriv1(r, vid)),
         Expr::Neg(v) => Expr::Neg(deriv1(v, vid)),
-        Expr::Mul(l, r) => Expr::Add(simplify(Expr::Mul(deriv1(l, vid), r.clone())),
-                                     simplify(Expr::Mul(deriv1(r, vid), l.clone()))),
-        Expr::Pow(v, e) => Expr::Mul(Box::new(Expr::Const(*e as f64)),
-                                     simplify(Expr::Mul(deriv1(v, vid),
-                                                        simplify(Expr::Pow(v.clone(), e - 1))))),
-        Expr::Cos(v) => Expr::Neg(simplify(Expr::Mul(simplify(Expr::Sin(v.clone())),
-                                                     deriv1(v, vid)))),
-        Expr::Sin(v) => Expr::Mul(simplify(Expr::Cos(v.clone())),
-                                  deriv1(v, vid)),
+        Expr::Mul(l, r) => Expr::Add(
+            simplify(Expr::Mul(deriv1(l, vid), r.clone())),
+            simplify(Expr::Mul(deriv1(r, vid), l.clone())),
+        ),
+        Expr::Pow(v, e) => Expr::Mul(
+            Box::new(Expr::Const(*e as f64)),
+            simplify(Expr::Mul(
+                deriv1(v, vid),
+                simplify(Expr::Pow(v.clone(), e - 1)),
+            )),
+        ),
+        Expr::Cos(v) => Expr::Neg(simplify(Expr::Mul(
+            simplify(Expr::Sin(v.clone())),
+            deriv1(v, vid),
+        ))),
+        Expr::Sin(v) => Expr::Mul(simplify(Expr::Cos(v.clone())), deriv1(v, vid)),
     })
 }
 
-fn tokens_to_expr<I: Iterator<Item = ExprToken>>(mut iter: &mut Peekable<I>, pr: Option<Priority>) -> Expr {
+fn tokens_to_expr<I: Iterator<Item = ExprToken>>(
+    mut iter: &mut Peekable<I>,
+    pr: Option<Priority>,
+) -> Expr {
     let mut expr = None;
     loop {
         if let Some(token) = iter.peek() {
             if let Some(p) = pr {
                 if let Some(p_op) = token.priority() {
-                    if p_op >= p { // back out
+                    if p_op >= p {
+                        // back out
                         break;
                     }
                 }
@@ -320,22 +363,35 @@ fn tokens_to_expr<I: Iterator<Item = ExprToken>>(mut iter: &mut Peekable<I>, pr:
             ExprToken::Group(stream) => tokens_to_expr(&mut stream.into_iter().peekable(), None),
             op @ ExprToken::Add => {
                 let lhs = expr.expect("Addition operator has no LHS");
-                Expr::Add(Box::new(lhs), Box::new(tokens_to_expr(&mut iter, op.priority())))
+                Expr::Add(
+                    Box::new(lhs),
+                    Box::new(tokens_to_expr(&mut iter, op.priority())),
+                )
             }
             op @ ExprToken::Sub => {
                 let lhs = expr.expect("Subtraction operator has no LHS");
-                Expr::Sub(Box::new(lhs), Box::new(tokens_to_expr(&mut iter, op.priority())))
+                Expr::Sub(
+                    Box::new(lhs),
+                    Box::new(tokens_to_expr(&mut iter, op.priority())),
+                )
             }
-            op @ ExprToken::Neg => {
-                Expr::Neg(Box::new(tokens_to_expr(&mut iter, op.priority())))
-            }
+            op @ ExprToken::Neg => Expr::Neg(Box::new(tokens_to_expr(&mut iter, op.priority()))),
             op @ ExprToken::Mul => {
                 let lhs = expr.expect("Multiplication operator has no LHS");
-                Expr::Mul(Box::new(lhs), Box::new(tokens_to_expr(&mut iter, op.priority())))
+                Expr::Mul(
+                    Box::new(lhs),
+                    Box::new(tokens_to_expr(&mut iter, op.priority())),
+                )
             }
             op @ ExprToken::Div => {
                 let lhs = expr.expect("Subtraction operator has no LHS");
-                Expr::Mul(Box::new(lhs), Box::new(Expr::Pow(Box::new(tokens_to_expr(&mut iter, op.priority())), -1)))
+                Expr::Mul(
+                    Box::new(lhs),
+                    Box::new(Expr::Pow(
+                        Box::new(tokens_to_expr(&mut iter, op.priority())),
+                        -1,
+                    )),
+                )
             }
             ExprToken::Pow(e) => {
                 let lhs = expr.expect("Powi has no LHS");
@@ -354,20 +410,23 @@ fn tokens_to_expr<I: Iterator<Item = ExprToken>>(mut iter: &mut Peekable<I>, pr:
     expr.expect("Empty expression")
 }
 
-fn get_const_tokens<I: Iterator<Item = TokenTree>>(first: TokenTree, iter: &mut Peekable<I>) -> ExprToken {
+fn get_const_tokens<I: Iterator<Item = TokenTree>>(
+    first: TokenTree,
+    iter: &mut Peekable<I>,
+) -> ExprToken {
     let mut tokens = vec![first];
     loop {
         match iter.peek() {
             None => {
                 break;
-            },
+            }
             Some(TokenTree::Punct(punct)) => {
                 let c = punct.as_char();
                 if c == '+' || c == '*' || c == '-' || c == '/' {
                     break;
                 }
-            },
-            _ => {}, // continue
+            }
+            _ => {} // continue
         }
         tokens.push(iter.next().unwrap());
     }
@@ -376,12 +435,11 @@ fn get_const_tokens<I: Iterator<Item = TokenTree>>(first: TokenTree, iter: &mut 
 
 fn extract_powi<I: Iterator<Item = TokenTree>>(iter: &mut I) -> ExprToken {
     let t = match iter.next() {
-        Some(TokenTree::Literal(lit)) => {
-            ExprToken::Pow(lit
-                           .to_string()
-                           .parse()
-                           .expect("Cannot parse powi argument as int"))
-        },
+        Some(TokenTree::Literal(lit)) => ExprToken::Pow(
+            lit.to_string()
+                .parse()
+                .expect("Cannot parse powi argument as int"),
+        ),
         _ => panic!("Expect literal interger in powi()"),
     };
     if let Some(_) = iter.next() {
@@ -406,27 +464,25 @@ fn extract_sin<I: Iterator<Item = TokenTree>>(iter: &mut I) -> ExprToken {
 
 fn get_method_call<I: Iterator<Item = TokenTree>>(iter: &mut I) -> ExprToken {
     match iter.next() {
-        Some(TokenTree::Ident(ident)) => {
-            match iter.next() {
-                Some(TokenTree::Group(group)) => {
-                    match ident.to_string().as_str() {
-                        "powi" => extract_powi(&mut group.stream().into_iter()),
-                        "cos" => extract_cos(&mut group.stream().into_iter()),
-                        "sin" => extract_sin(&mut group.stream().into_iter()),
-                        id => panic!("Unrecognised method ident: {}", id),
-                    }
-                }
-                _ => panic!("Now parenthesis after susecpect method call"),
-            }
-        }
+        Some(TokenTree::Ident(ident)) => match iter.next() {
+            Some(TokenTree::Group(group)) => match ident.to_string().as_str() {
+                "powi" => extract_powi(&mut group.stream().into_iter()),
+                "cos" => extract_cos(&mut group.stream().into_iter()),
+                "sin" => extract_sin(&mut group.stream().into_iter()),
+                id => panic!("Unrecognised method ident: {}", id),
+            },
+            _ => panic!("Now parenthesis after susecpect method call"),
+        },
         _ => panic!("No ident after period for suspect method call"),
     }
 }
 
-fn get_expr<I: Iterator<Item = TokenTree>>(left: Option<&ExprToken>,
-                                           mut iter: &mut Peekable<I>,
-                                           vars: &HashSet<String>,
-                                           pars: &HashSet<String>) -> Option<ExprToken> {
+fn get_expr<I: Iterator<Item = TokenTree>>(
+    left: Option<&ExprToken>,
+    mut iter: &mut Peekable<I>,
+    vars: &HashSet<String>,
+    pars: &HashSet<String>,
+) -> Option<ExprToken> {
     match iter.next() {
         Some(TokenTree::Ident(ident)) => {
             let id = ident.to_string();
@@ -437,55 +493,59 @@ fn get_expr<I: Iterator<Item = TokenTree>>(left: Option<&ExprToken>,
             } else {
                 Some(get_const_tokens(TokenTree::Ident(ident), &mut iter))
             }
-        },
+        }
         Some(TokenTree::Punct(punct)) => {
             match punct.as_char() {
                 '+' => Some(ExprToken::Add),
-                '-' => {
-                    match left {
-                        None | Some(ExprToken::Add) | Some(ExprToken::Sub) | Some(ExprToken::Mul) | Some(ExprToken::Div) => Some(ExprToken::Neg),
-                        _ => Some(ExprToken::Sub),
-                    }
+                '-' => match left {
+                    None | Some(ExprToken::Add) | Some(ExprToken::Sub) | Some(ExprToken::Mul)
+                    | Some(ExprToken::Div) => Some(ExprToken::Neg),
+                    _ => Some(ExprToken::Sub),
                 },
                 '*' => {
                     // Check if it looks like a dereference
                     match left {
-                        None | Some(ExprToken::Add) | Some(ExprToken::Sub) | Some(ExprToken::Mul) | Some(ExprToken::Div) =>
-                            Some(get_const_tokens(TokenTree::Punct(punct), &mut iter)),
+                        None | Some(ExprToken::Add) | Some(ExprToken::Sub)
+                        | Some(ExprToken::Mul) | Some(ExprToken::Div) => {
+                            Some(get_const_tokens(TokenTree::Punct(punct), &mut iter))
+                        }
                         _ => Some(ExprToken::Mul),
                     }
-                },
+                }
                 '/' => Some(ExprToken::Div),
-                '.' => { // see if it is one of our allowed method calls
+                '.' => {
+                    // see if it is one of our allowed method calls
                     match left {
                         Some(ExprToken::Var(_)) | Some(ExprToken::Par(_)) => {
                             Some(get_method_call(&mut iter))
                         }
                         _ => panic!("Expected method call on Var or Par"),
                     }
-                },
+                }
                 _ => Some(get_const_tokens(TokenTree::Punct(punct), &mut iter)),
             }
-        },
+        }
         Some(TokenTree::Group(group)) => {
             if group.delimiter() == Delimiter::Parenthesis {
-                Some(ExprToken::Group(to_expr_stream(&mut group.stream().into_iter().peekable(), vars, pars)))
+                Some(ExprToken::Group(to_expr_stream(
+                    &mut group.stream().into_iter().peekable(),
+                    vars,
+                    pars,
+                )))
             } else {
                 panic!("Can only work with grouping with parenthesis");
             }
-        },
-        Some(TokenTree::Literal(lit)) => {
-             Some(get_const_tokens(TokenTree::Literal(lit), &mut iter))
-        },
-        None => {
-            None
-        },
+        }
+        Some(TokenTree::Literal(lit)) => Some(get_const_tokens(TokenTree::Literal(lit), &mut iter)),
+        None => None,
     }
 }
 
-fn to_expr_stream<I: Iterator<Item = TokenTree>>(mut iter: &mut Peekable<I>,
-                                                 vars: &HashSet<String>,
-                                                 pars: &HashSet<String>) -> Vec<ExprToken> {
+fn to_expr_stream<I: Iterator<Item = TokenTree>>(
+    mut iter: &mut Peekable<I>,
+    vars: &HashSet<String>,
+    pars: &HashSet<String>,
+) -> Vec<ExprToken> {
     let mut expr_stream = Vec::new();
     while let Some(expr) = get_expr(expr_stream.last(), &mut iter, vars, pars) {
         expr_stream.push(expr);
@@ -497,12 +557,8 @@ fn to_expr_stream<I: Iterator<Item = TokenTree>>(mut iter: &mut Peekable<I>,
 fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
     for token in iter {
         let found = match token {
-            TokenTree::Ident(ident) => {
-                names.contains(ident.to_string().as_str())
-            },
-            TokenTree::Group(group) => {
-                contains_ident(group.stream(), &names)
-            },
+            TokenTree::Ident(ident) => names.contains(ident.to_string().as_str()),
+            TokenTree::Group(group) => contains_ident(group.stream(), &names),
             _ => false,
         };
         if found {
@@ -611,7 +667,11 @@ pub fn expr(input: TokenStream) -> TokenStream {
         for (k2, _) in v.iter().skip(i) {
             let ex2 = *deriv1(&ex1, k2);
             if !ex2.is_zero() {
-                body2.extend(TokenStream::from_str(&format!("__d2[{}] = ", d2_nz.len())).unwrap().into_iter());
+                body2.extend(
+                    TokenStream::from_str(&format!("__d2[{}] = ", d2_nz.len()))
+                        .unwrap()
+                        .into_iter(),
+                );
                 ex2.into_tokens(&mut body2);
                 body2.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
                 d2_nz.push((k1.clone(), k2.clone()));
@@ -622,7 +682,11 @@ pub fn expr(input: TokenStream) -> TokenStream {
         // Not simplifying the original expression so variable might be
         // required there but then has zero first derivative.
         if !ex1.is_zero() {
-            body1.extend(TokenStream::from_str(&format!("__d1[{}] = ", d1_nz.len())).unwrap().into_iter());
+            body1.extend(
+                TokenStream::from_str(&format!("__d1[{}] = ", d1_nz.len()))
+                    .unwrap()
+                    .into_iter(),
+            );
             ex1.into_tokens(&mut body1);
             body1.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
             d1_nz.push(k1.clone());
@@ -633,8 +697,15 @@ pub fn expr(input: TokenStream) -> TokenStream {
     all_body.extend(body2.clone().into_iter());
 
     let mut d1_clo = Vec::new();
-    d1_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64]|").unwrap().into_iter());
-    d1_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body1.into_iter().collect())));
+    d1_clo.extend(
+        TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64]|")
+            .unwrap()
+            .into_iter(),
+    );
+    d1_clo.push(TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        body1.into_iter().collect(),
+    )));
 
     let mut body = Vec::new();
     for k in &d1_nz {
@@ -643,20 +714,37 @@ pub fn expr(input: TokenStream) -> TokenStream {
     }
     let mut d1_spar = Vec::new();
     d1_spar.extend(TokenStream::from_str("vec!").unwrap().into_iter());
-    d1_spar.push(TokenTree::Group(Group::new(Delimiter::Bracket, body.into_iter().collect())));
+    d1_spar.push(TokenTree::Group(Group::new(
+        Delimiter::Bracket,
+        body.into_iter().collect(),
+    )));
 
     let mut d2_clo = Vec::new();
-    d2_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d2: &mut[f64]|").unwrap().into_iter());
-    d2_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body2.into_iter().collect())));
+    d2_clo.extend(
+        TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d2: &mut[f64]|")
+            .unwrap()
+            .into_iter(),
+    );
+    d2_clo.push(TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        body2.into_iter().collect(),
+    )));
 
     let mut body = Vec::new();
     for (k1, k2) in &d2_nz {
-        body.extend(TokenStream::from_str(&format!("descent::expr::order({}, {})", &k1, &k2)).unwrap().into_iter());
+        body.extend(
+            TokenStream::from_str(&format!("descent::expr::order({}, {})", &k1, &k2))
+                .unwrap()
+                .into_iter(),
+        );
         body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
     }
     let mut d2_spar = Vec::new();
     d2_spar.extend(TokenStream::from_str("vec!").unwrap().into_iter());
-    d2_spar.push(TokenTree::Group(Group::new(Delimiter::Bracket, body.into_iter().collect())));
+    d2_spar.push(TokenTree::Group(Group::new(
+        Delimiter::Bracket,
+        body.into_iter().collect(),
+    )));
 
     // f closure
     let mut body = Vec::new();
@@ -665,30 +753,56 @@ pub fn expr(input: TokenStream) -> TokenStream {
     all_body.extend(body.clone().into_iter());
 
     let mut f_clo = Vec::new();
-    f_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64]|").unwrap().into_iter());
-    f_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
+    f_clo.extend(
+        TokenStream::from_str("move |__v: &[f64], __p: &[f64]|")
+            .unwrap()
+            .into_iter(),
+    );
+    f_clo.push(TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        body.into_iter().collect(),
+    )));
 
     // all closure
     let mut all_clo = Vec::new();
-    all_clo.extend(TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64], __d2: &mut[f64]|").unwrap().into_iter());
-    all_clo.push(TokenTree::Group(Group::new(Delimiter::Brace, all_body.into_iter().collect())));
+    all_clo.extend(
+        TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64], __d2: &mut[f64]|")
+            .unwrap()
+            .into_iter(),
+    );
+    all_clo.push(TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        all_body.into_iter().collect(),
+    )));
 
     // final returned tokens
     let mut body = Vec::new();
     body.extend(TokenStream::from_str("f: Box::new").unwrap().into_iter());
-    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, f_clo.into_iter().collect())));
+    body.push(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        f_clo.into_iter().collect(),
+    )));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     body.extend(TokenStream::from_str("d1: Box::new").unwrap().into_iter());
-    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, d1_clo.into_iter().collect())));
+    body.push(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        d1_clo.into_iter().collect(),
+    )));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     body.extend(TokenStream::from_str("d2: Box::new").unwrap().into_iter());
-    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, d2_clo.into_iter().collect())));
+    body.push(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        d2_clo.into_iter().collect(),
+    )));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     body.extend(TokenStream::from_str("all: Box::new").unwrap().into_iter());
-    body.push(TokenTree::Group(Group::new(Delimiter::Parenthesis, all_clo.into_iter().collect())));
+    body.push(TokenTree::Group(Group::new(
+        Delimiter::Parenthesis,
+        all_clo.into_iter().collect(),
+    )));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     body.extend(TokenStream::from_str("d1_sparsity: ").unwrap().into_iter());
@@ -719,12 +833,22 @@ pub fn expr(input: TokenStream) -> TokenStream {
             structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
         }
     }
-    structure.extend(TokenStream::from_str("descent::expr::fixed::ExprFix").unwrap().into_iter());
-    structure.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
+    structure.extend(
+        TokenStream::from_str("descent::expr::fixed::ExprFix")
+            .unwrap()
+            .into_iter(),
+    );
+    structure.push(TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        body.into_iter().collect(),
+    )));
 
     let mut ret = Vec::new();
     // outer block to allow local scope for lets
-    ret.push(TokenTree::Group(Group::new(Delimiter::Brace, structure.into_iter().collect())));
+    ret.push(TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        structure.into_iter().collect(),
+    )));
     let ret: TokenStream = ret.into_iter().collect();
     //println!("TokenStream: {}", ret.to_string());
     ret

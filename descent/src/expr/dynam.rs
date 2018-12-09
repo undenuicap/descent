@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::{ID, Var, Par, Retrieve, Column, Expression};
+use super::{Column, Expression, Par, Retrieve, Var, ID};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Mul, Sub};
 
@@ -786,7 +786,7 @@ impl Expr {
         }
 
         match degs.pop() {
-            Some(d) => ExprInfo::from(d),
+            Some(d) => d.into(),
             None => ExprInfo::new(),
         }
     }
@@ -928,8 +928,7 @@ impl ExprDyn {
     //        }
     //    }
     //}
- }
-
+}
 
 /// Cross two sets of IDs.
 fn cross_ids(id1s: &HashSet<ID>, id2s: &HashSet<ID>, target: &mut HashSet<(ID, ID)>) {
@@ -1407,8 +1406,8 @@ impl WorkSpace {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use super::*;
     use super::super::Store;
+    use super::*;
 
     #[test]
     fn operations() {

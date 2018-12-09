@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::expr::{Expression, Var, Par, Retrieve, Store, ID};
+use crate::expr::{Expression, Par, Retrieve, Store, Var, ID};
 
 //pub enum VarType {
 //    Continuous,
@@ -74,9 +74,7 @@ impl Solution {
     /// Calculate the value of an expression using the solution.
     pub fn value(&self, expr: &Expression) -> f64 {
         match expr {
-            Expression::ExprFix(e) => {
-                (e.f)(&self.store.vars, &self.store.pars)
-            }
+            Expression::ExprFix(e) => (e.f)(&self.store.vars, &self.store.pars),
             Expression::ExprFixSum(es) => {
                 let mut val = 0.0;
                 for e in es {

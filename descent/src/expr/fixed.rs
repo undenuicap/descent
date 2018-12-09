@@ -13,7 +13,7 @@
 //
 // Should Use Rc instead of Box if want to easily clone.
 
-use super::{Var, Expression};
+use super::{Expression, Var};
 
 /// Fixed expression with pointers to functions to evaluated the expression
 /// and its first and second derivatives.

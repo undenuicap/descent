@@ -9,16 +9,14 @@
 #![feature(test)]
 
 mod ipopt;
+mod sparsity;
 
-use descent::expr::{Par, Var, ID};
-use descent::expr::{Expression, Retrieve, Column};
+use crate::sparsity::Sparsity;
 use descent::expr::dynam::WorkSpace;
+use descent::expr::{Column, Expression, Retrieve};
+use descent::expr::{Par, Var};
 use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
-use fnv::FnvHashMap;
-use std::f64;
-use std::ffi::CString;
-use std::ptr;
 
 struct Variable {
     lb: f64,
@@ -63,7 +61,7 @@ struct ModelCache {
 }
 
 // Make sure don't implement copy or clone for this otherwise risk of double
-// free
+// free.
 struct IpoptProblem {
     prob: ipopt::IpoptProblem,
 }
@@ -173,7 +171,7 @@ impl IpoptModel {
         cache.cons.resize(ncons, Column::new());
 
         // Need to allocate memory for static expressions
-        // Don't need this for Expr as done dynamically, but doing anyway
+        // Don't need this for ExprDyn as done dynamically, but doing anyway
         cache.obj.der1.resize(self.model.obj.expr.d1_nz(), 0.0);
         cache.obj.der2.resize(self.model.obj.expr.d2_nz(), 0.0);
         for (cc, c) in cache.cons.iter_mut().zip(self.model.cons.iter()) {
@@ -193,8 +191,8 @@ impl IpoptModel {
     pub fn set_str_option(&mut self, key: &str, val: &str) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
-            let key_c = CString::new(key).unwrap();
-            let val_c = CString::new(val).unwrap();
+            let key_c = std::ffi::CString::new(key).unwrap();
+            let val_c = std::ffi::CString::new(val).unwrap();
             unsafe {
                 ipopt::AddIpoptStrOption(prob.prob, key_c.as_ptr(), val_c.as_ptr()) != 0 // convert to bool
             }
@@ -210,7 +208,7 @@ impl IpoptModel {
     pub fn set_num_option(&mut self, key: &str, val: f64) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
-            let key_c = CString::new(key).unwrap();
+            let key_c = std::ffi::CString::new(key).unwrap();
             unsafe {
                 ipopt::AddIpoptNumOption(prob.prob, key_c.as_ptr(), val) != 0 // convert to bool
             }
@@ -226,7 +224,7 @@ impl IpoptModel {
     pub fn set_int_option(&mut self, key: &str, val: i32) -> bool {
         self.prepare();
         if let Some(ref mut prob) = self.prob {
-            let key_c = CString::new(key).unwrap();
+            let key_c = std::ffi::CString::new(key).unwrap();
             unsafe {
                 ipopt::AddIpoptIntOption(prob.prob, key_c.as_ptr(), val) != 0 // convert to bool
             }
@@ -268,13 +266,16 @@ impl IpoptModel {
         if let (&mut Some(ref mut cache), &Some(ref prob)) = (&mut self.cache, &self.prob) {
             let ipopt_status;
             {
-                // Just passing it the solution store (in theory var values
-                // should not affect the values).
+                // Calculating constant values in ExprDyn expressions.
+                // Passing it the solution store (in theory var values should
+                // not affect the values).
                 cache.cons_const.clear();
                 for c in &self.model.cons {
                     match &c.expr {
                         Expression::ExprDyn(e) => {
-                            cache.cons_const.push(e.auto_const(&sol.store, &mut cache.ws));
+                            cache
+                                .cons_const
+                                .push(e.auto_const(&sol.store, &mut cache.ws));
                         }
                         Expression::ExprDynSum(es) => {
                             let mut col = Column::new();
@@ -296,10 +297,9 @@ impl IpoptModel {
                     }
                     Expression::ExprDynSum(es) => {
                         for e in es {
-                            cache.obj_const.sum_concat(e.auto_const(
-                                &sol.store,
-                                &mut cache.ws,
-                            ));
+                            cache
+                                .obj_const
+                                .sum_concat(e.auto_const(&sol.store, &mut cache.ws));
                         }
                     }
                     _ => {}
@@ -313,13 +313,12 @@ impl IpoptModel {
 
                 let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
 
-                // This and others might throw and exception.  How would we
-                // catch?
+                // This and others might throw an exception. How would we catch?
                 ipopt_status = unsafe {
                     ipopt::IpoptSolve(
                         prob.prob,
                         sol.store.vars.as_mut_ptr(),
-                        ptr::null_mut(), // can calc ourselves
+                        std::ptr::null_mut(), // can calc ourselves
                         &mut sol.obj_val,
                         sol.con_mult.as_mut_ptr(),
                         sol.var_lb_mult.as_mut_ptr(),
@@ -350,150 +349,6 @@ impl IpoptModel {
         } else {
             (SolutionStatus::Error, None)
         }
-    }
-}
-
-#[derive(Debug, Default)]
-struct Sparsity {
-    jac_sp: FnvHashMap<(usize, ID), usize>,
-    jac_cons_inds: Vec<Vec<usize>>,
-    hes_sp: FnvHashMap<(ID, ID), usize>,
-    hes_cons_inds: Vec<Vec<usize>>,
-    hes_obj_inds: Vec<usize>,
-}
-
-impl Sparsity {
-    fn new() -> Sparsity {
-        Sparsity::default()
-    }
-
-    fn jac_index(&mut self, eid: (usize, ID)) -> usize {
-        let id = self.jac_sp.len(); // incase need to create new
-        *self.jac_sp.entry(eid).or_insert(id)
-    }
-
-    fn hes_index(&mut self, eid: (ID, ID)) -> usize {
-        let id = self.hes_sp.len(); // incase need to create new
-        *self.hes_sp.entry(eid).or_insert(id)
-    }
-
-    fn add_con(&mut self, expr: &Expression) {
-        let cid = self.jac_cons_inds.len();
-        let mut v_hes = Vec::new();
-        let mut v_jac = Vec::new();
-        match expr {
-            Expression::ExprFix(e) => {
-                v_jac.extend(e.d1_sparsity.iter().map(|Var(v)| self.jac_index((cid, *v))));
-                v_hes.extend(
-                    e.d2_sparsity
-                        .iter()
-                        .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
-                );
-            }
-            Expression::ExprFixSum(es) => {
-                for e in es {
-                    v_jac.extend(e.d1_sparsity.iter().map(|Var(v)| self.jac_index((cid, *v))));
-                    v_hes.extend(
-                        e.d2_sparsity
-                            .iter()
-                            .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
-                    );
-                }
-            }
-            Expression::ExprDyn(e) => {
-                v_jac.extend(e.info.lin.iter().map(|i| self.jac_index((cid, *i))));
-                v_jac.extend(e.info.nlin.iter().map(|i| self.jac_index((cid, *i))));
-                v_hes.extend(
-                    e.info.quad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                );
-                v_hes.extend(
-                    e.info.nquad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                );
-            }
-            Expression::ExprDynSum(es) => {
-                for e in es {
-                    v_jac.extend(e.info.lin.iter().map(|i| self.jac_index((cid, *i))));
-                    v_hes.extend(
-                        e.info.quad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                    );
-                }
-                for e in es {
-                    v_jac.extend(e.info.nlin.iter().map(|i| self.jac_index((cid, *i))));
-                    v_hes.extend(
-                        e.info.nquad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                    );
-                }
-            }
-        }
-        self.hes_cons_inds.push(v_hes);
-        self.jac_cons_inds.push(v_jac);
-    }
-
-    fn add_obj(&mut self, expr: &Expression) {
-        let mut v = Vec::new();
-        match expr {
-            Expression::ExprFix(e) => {
-                v.extend(
-                    e.d2_sparsity
-                        .iter()
-                        .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
-                );
-            }
-            Expression::ExprFixSum(es) => {
-                for e in es {
-                    v.extend(
-                        e.d2_sparsity
-                            .iter()
-                            .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
-                    );
-                }
-            }
-            Expression::ExprDyn(e) => {
-                v.extend(
-                    e.info.quad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                );
-                v.extend(
-                    e.info.nquad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                );
-            }
-            Expression::ExprDynSum(es) => {
-                for e in es {
-                    v.extend(
-                        e.info.quad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                    );
-                }
-                for e in es {
-                    v.extend(
-                        e.info.nquad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
-                    );
-                }
-            }
-        }
-        self.hes_obj_inds = v;
-    }
-
-    fn jac_len(&self) -> usize {
-        self.jac_sp.len()
-    }
-
-    fn hes_len(&self) -> usize {
-        self.hes_sp.len()
     }
 }
 
@@ -564,8 +419,8 @@ impl Model for IpoptModel {
 }
 
 struct Store<'a> {
-    vars: &'a [ipopt::Number],
-    pars: &'a Vec<f64>,
+    vars: &'a [ipopt::Number], // reference values provided in IPOPT callbacks
+    pars: &'a [f64],           // values stored in model
 }
 
 impl<'a> Retrieve for Store<'a> {
@@ -578,87 +433,56 @@ impl<'a> Retrieve for Store<'a> {
     }
 }
 
-/// Need to initialise the columns to correct lengths for static expr's
-fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
-    match &cb_data.model.obj.expr {
+fn evaluate(expr: &Expression, store: &Store, col: &mut Column, mut ws: &mut WorkSpace) {
+    match expr {
         Expression::ExprFix(expr) => {
-            cb_data.cache.obj.val = (expr.all)(
+            col.val = (expr.all)(
                 store.vars,
                 store.pars,
-                &mut cb_data.cache.obj.der1,
-                &mut cb_data.cache.obj.der2,
+                &mut col.der1,
+                &mut col.der2,
             );
         }
         Expression::ExprFixSum(es) => {
-            cb_data.cache.obj.val = 0.0;
+            col.val = 0.0;
             let mut der1_off = 0;
             let mut der2_off = 0;
             for expr in es {
                 let d1_len = expr.d1_sparsity.len();
                 let d2_len = expr.d2_sparsity.len();
-                cb_data.cache.obj.val += (expr.all)(
+                col.val += (expr.all)(
                     store.vars,
                     store.pars,
-                    &mut cb_data.cache.obj.der1[der1_off..der1_off + d1_len],
-                    &mut cb_data.cache.obj.der2[der2_off..der2_off + d2_len],
+                    &mut col.der1[der1_off..der1_off + d1_len],
+                    &mut col.der2[der2_off..der2_off + d2_len],
                 );
                 der1_off += d1_len;
                 der2_off += d2_len;
             }
         }
         Expression::ExprDyn(e) => {
-            cb_data.cache.obj = e.auto_dynam(store, &mut cb_data.cache.ws);
+            *col = e.auto_dynam(store, &mut ws);
         }
         Expression::ExprDynSum(es) => {
-            cb_data.cache.obj.val = 0.0;
-            cb_data.cache.obj.der1.clear();
-            cb_data.cache.obj.der2.clear();
+            col.val = 0.0;
+            col.der1.clear();
+            col.der2.clear();
             for e in es {
-                cb_data
-                    .cache
-                    .obj
-                    .sum_concat(e.auto_dynam(store, &mut cb_data.cache.ws));
+                col.sum_concat(e.auto_dynam(store, &mut ws));
             }
         }
     }
 }
 
 /// Need to initialise the columns to correct lengths for static expr's
-fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
-    for (cc, c) in cb_data.cache.cons.iter_mut().zip(cb_data.model.cons.iter()) {
-        match &c.expr {
-            Expression::ExprFix(expr) => {
-                cc.val = (expr.all)(store.vars, store.pars, &mut cc.der1, &mut cc.der2);
-            }
-            Expression::ExprFixSum(es) => {
-                cc.val = 0.0;
-                let mut der1_off = 0;
-                let mut der2_off = 0;
-                for expr in es {
-                    let d1_len = expr.d1_sparsity.len();
-                    let d2_len = expr.d2_sparsity.len();
-                    cc.val += (expr.all)(
-                        store.vars,
-                        store.pars,
-                        &mut cc.der1[der1_off..der1_off + d1_len],
-                        &mut cc.der2[der2_off..der2_off + d2_len],
-                    );
-                    der1_off += d1_len;
-                    der2_off += d2_len;
-                }
-            }
-            Expression::ExprDyn(e) => {
-                *cc = e.auto_dynam(store, &mut cb_data.cache.ws);
-            }
-            Expression::ExprDynSum(es) => {
-                cc.val = 0.0;
-                cc.der1.clear();
-                cc.der2.clear();
-                for e in es {
-                    cc.sum_concat(e.auto_dynam(store, &mut cb_data.cache.ws));
-                }
-            }
-        }
+fn evaluate_obj(cb_data: &mut IpoptCBData, store: &Store) {
+    evaluate(&cb_data.model.obj.expr, &store, &mut cb_data.cache.obj, &mut cb_data.cache.ws);
+}
+
+/// Need to initialise the columns to correct lengths for static expr's
+fn evaluate_cons(cb_data: &mut IpoptCBData, store: &Store) {
+    for (mut cc, c) in cb_data.cache.cons.iter_mut().zip(cb_data.model.cons.iter()) {
+        evaluate(&c.expr, &store, &mut cc, &mut cb_data.cache.ws);
     }
 }
 
@@ -670,6 +494,11 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
 // as a by-product (e.g., the full_fwd call).
 // For example problem (non-sparsity function calls, those that had new_x):
 // f (99, 3) f_grad (73, 1) g (99, 95) g_jac (80, 1) l_hess (72, 0)
+//
+// For f_grad looks like one first call values are not saved, but after
+// that they are. g_jac doesn't have same issue. l_hess is completely over the
+// place, (scaling going on?). Might use some of the above to avoid copying
+// constant values more than once.
 
 extern "C" fn f(
     n: ipopt::Index,
@@ -689,11 +518,11 @@ extern "C" fn f(
         //cb_data.cache.f_count.1 += 1;
         let store = Store {
             vars: unsafe { slice::from_raw_parts(x, n as usize) },
-            pars: cb_data.pars,
+            pars: cb_data.pars.as_slice(),
         };
 
-        solve_obj(cb_data, &store);
-        solve_cons(cb_data, &store);
+        evaluate_obj(cb_data, &store);
+        evaluate_cons(cb_data, &store);
     }
 
     let value = unsafe { &mut *obj_value };
@@ -722,25 +551,12 @@ extern "C" fn f_grad(
             pars: cb_data.pars,
         };
 
-        solve_obj(cb_data, &store);
-        solve_cons(cb_data, &store);
+        evaluate_obj(cb_data, &store);
+        evaluate_cons(cb_data, &store);
     }
 
     let values = unsafe { slice::from_raw_parts_mut(grad_f, n as usize) };
-    // Should check if need to zero other entries in grad_f
-    // Should check if we only need to upload constant values once (for jac at
-    // least).
-    // Should check if we can calculate on demand, ie use new_x to trigger other
-    // states.
-    // For f_grad looks like one first call values are not saved, but after
-    // that they are.
-    // g_jac doesn't have same issue
-    // l_hess is completely over the place, (scaling going on?)
-    // For large sums and multiplications, should consider adding new operator
-    // that might include a constant factor.
-    //println!("bef: {:?}", values);
 
-    // Not sure if we need to clear, doing it anyway
     for v in values.iter_mut() {
         *v = 0.0;
     }
@@ -752,7 +568,6 @@ extern "C" fn f_grad(
     for (i, v) in cb_data.model.obj.expr.nlin().enumerate() {
         values[v] += cb_data.cache.obj.der1[i];
     }
-    //println!("aft: {:?}", values);
     1
 }
 
@@ -781,8 +596,8 @@ extern "C" fn g(
             pars: cb_data.pars,
         };
 
-        solve_obj(cb_data, &store);
-        solve_cons(cb_data, &store);
+        evaluate_obj(cb_data, &store);
+        evaluate_cons(cb_data, &store);
     }
 
     let values = unsafe { slice::from_raw_parts_mut(g, m as usize) };
@@ -834,8 +649,8 @@ extern "C" fn g_jac(
                 pars: cb_data.pars,
             };
 
-            solve_obj(cb_data, &store);
-            solve_cons(cb_data, &store);
+            evaluate_obj(cb_data, &store);
+            evaluate_cons(cb_data, &store);
         }
 
         let values = unsafe { slice::from_raw_parts_mut(vals, nele_jac as usize) };
@@ -858,7 +673,6 @@ extern "C" fn g_jac(
                 values[*i] += *val;
             }
         }
-        //println!("aft: {:?}", values);
     }
     1
 }
@@ -907,16 +721,13 @@ extern "C" fn l_hess(
                 pars: cb_data.pars,
             };
 
-            solve_obj(cb_data, &store);
-            solve_cons(cb_data, &store);
+            evaluate_obj(cb_data, &store);
+            evaluate_cons(cb_data, &store);
         }
 
         let lam = unsafe { slice::from_raw_parts(lambda, m as usize) };
         let values = unsafe { slice::from_raw_parts_mut(vals, nele_hes as usize) };
 
-        //println!("bef: {:?}", values);
-        // Looks like this is required as values are non-zero and all over the
-        // place on next callback (maybe scaled?)
         for v in values.iter_mut() {
             *v = 0.0;
         }
@@ -945,7 +756,6 @@ extern "C" fn l_hess(
                 values[*i] += l * val;
             }
         }
-        //println!("aft: {:?}", values);
     }
     1
 }
@@ -955,6 +765,7 @@ mod tests {
     extern crate test;
     use super::*;
     use descent::expr::dynam::NumOps;
+    use std::f64;
     #[test]
     fn univar_problem() {
         let mut m = IpoptModel::new();

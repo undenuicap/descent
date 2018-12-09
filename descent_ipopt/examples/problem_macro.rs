@@ -16,7 +16,7 @@ use descent_macro::expr;
 
 fn main() {
     // Below values are: Iter, T in IPOPT, T in NLP (this), T in NLP (mo)
-    //let n: usize = 100000; // 8, 2.1, 0.15, 0.568 
+    //let n: usize = 100000; // 8, 2.1, 0.15, 0.568
     //let n: usize = 10000; // 8, 0.098, 0.016, 0.056
     //let n: usize = 5000; // 8, 0.047, 0.007, 0.021
     let n: usize = 1000; // 75, 0.080, 0.010, 0.035

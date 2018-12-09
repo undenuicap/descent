@@ -6,8 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub mod fixed;
 pub mod dynam;
+pub mod fixed;
 
 use self::dynam::{ExprDyn, ExprDynSum};
 use self::fixed::{ExprFix, ExprFixSum};
@@ -79,11 +79,9 @@ impl Expression {
             Expression::ExprFix(_) => Box::new(std::iter::empty()),
             Expression::ExprFixSum(_) => Box::new(std::iter::empty()),
             Expression::ExprDyn(e) => Box::new(e.info.lin.iter().cloned()),
-            Expression::ExprDynSum(es) => Box::new(
-                es.iter()
-                    .map(|e| e.info.lin.iter().cloned())
-                    .flatten(),
-            ),
+            Expression::ExprDynSum(es) => {
+                Box::new(es.iter().map(|e| e.info.lin.iter().cloned()).flatten())
+            }
         }
     }
 
@@ -96,11 +94,9 @@ impl Expression {
                     .flatten(),
             ),
             Expression::ExprDyn(e) => Box::new(e.info.nlin.iter().cloned()),
-            Expression::ExprDynSum(es) => Box::new(
-                es.iter()
-                    .map(|e| e.info.nlin.iter().cloned())
-                    .flatten(),
-            ),
+            Expression::ExprDynSum(es) => {
+                Box::new(es.iter().map(|e| e.info.nlin.iter().cloned()).flatten())
+            }
         }
     }
 
@@ -181,4 +177,3 @@ impl Column {
         self.der2.extend(other.der2.into_iter());
     }
 }
-
