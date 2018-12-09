@@ -7,7 +7,7 @@
 // except according to those terms.
 //
 // NumOps trait required to be in scope to use cos and powi
-use descent::expr::dynam::{Expr, NumOps};
+use descent::expr::dynam::{ExprDynSum, NumOps};
 use descent::model::Model;
 use descent_ipopt::IpoptModel;
 
@@ -24,7 +24,11 @@ fn main() {
         xs.push(m.add_var(-1.5, 0.0, -0.5));
     }
     println!("Building objective");
-    let mut obj = Expr::from(0.0);
+    // For such large sums, want to use a ExprDynSum. Can make one explicity:
+    let mut obj = ExprDynSum::new();
+    // or could just use regular expression (automatically gets converted to
+    // ExprDynSum when added to model):
+    //let mut obj = Expr::from(0.0);
     for &x in &xs {
         obj = obj + (x - 1.0).powi(2);
     }

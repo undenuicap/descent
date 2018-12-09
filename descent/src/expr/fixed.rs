@@ -13,7 +13,7 @@
 //
 // Should Use Rc instead of Box if want to easily clone.
 
-use super::Var;
+use super::{Var, Expression};
 
 /// Fixed expression with pointers to functions to evaluated the expression
 /// and its first and second derivatives.
@@ -35,6 +35,12 @@ pub struct ExprFix {
     pub d2_sparsity: Vec<(Var, Var)>,
 }
 
+impl From<ExprFix> for Expression {
+    fn from(v: ExprFix) -> Self {
+        Expression::ExprFix(v)
+    }
+}
+
 /// Represents the sum of multiple fixed expressions.
 ///
 /// This enables some more runtime flexibility without having to resort to a
@@ -44,6 +50,12 @@ pub type ExprFixSum = Vec<ExprFix>;
 impl From<ExprFix> for ExprFixSum {
     fn from(v: ExprFix) -> Self {
         vec![v]
+    }
+}
+
+impl From<ExprFixSum> for Expression {
+    fn from(v: ExprFixSum) -> Self {
+        Expression::ExprFixSum(v)
     }
 }
 

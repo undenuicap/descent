@@ -15,11 +15,48 @@ pub struct ExprDyn {
     pub info: ExprInfo,
 }
 
+impl From<ExprDyn> for Expression {
+    fn from(expr: ExprDyn) -> Self {
+        Expression::ExprDyn(expr)
+    }
+}
+
 /// Represents the sum of multiple dynamic expressions.
 ///
 /// Breaking up expressions in to smaller sums of expressions can improve the
 /// performance of AD techniques for large sums.
 pub type ExprDynSum = Vec<ExprDyn>;
+
+impl From<Expr> for ExprDyn {
+    fn from(expr: Expr) -> Self {
+        let info = expr.get_info();
+        ExprDyn { expr, info }
+    }
+}
+
+impl From<ExprDynSum> for Expression {
+    fn from(expr: ExprDynSum) -> Self {
+        Expression::ExprDynSum(expr)
+    }
+}
+
+impl std::ops::Add<ExprDynSum> for Expr {
+    type Output = ExprDynSum;
+
+    fn add(self, mut other: ExprDynSum) -> ExprDynSum {
+        other.push(self.into());
+        other
+    }
+}
+
+impl std::ops::Add<Expr> for ExprDynSum {
+    type Output = ExprDynSum;
+
+    fn add(mut self, other: Expr) -> ExprDynSum {
+        self.push(other.into());
+        self
+    }
+}
 
 /// Information about a `Expr` for guiding AD process.
 ///
@@ -139,14 +176,6 @@ pub(crate) enum Oper {
 pub struct Expr {
     ops: Vec<Oper>,
 }
-
-impl From<Expr> for ExprDyn {
-    fn from(expr: Expr) -> Self {
-        let info = expr.get_info();
-        ExprDyn { expr, info }
-    }
-}
-
 
 impl From<Expr> for Expression {
     fn from(expr: Expr) -> Self {

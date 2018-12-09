@@ -149,18 +149,6 @@ impl Expression {
     }
 }
 
-impl From<ExprFix> for Expression {
-    fn from(v: ExprFix) -> Self {
-        Expression::ExprFix(v)
-    }
-}
-
-impl From<ExprFixSum> for Expression {
-    fn from(v: ExprFixSum) -> Self {
-        Expression::ExprFixSum(v)
-    }
-}
-
 /// Order second derivative pairs.
 ///
 /// Should fill out bottom left of Hessian with this ordering.
