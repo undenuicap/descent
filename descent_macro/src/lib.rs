@@ -512,14 +512,14 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
     false
 }
 
-/// Generate a ExprStatic expression.
+/// Generate a ExprFix expression.
 ///
 /// expr!(\<expr\>; var1 [= \<expr\>], ...[; par1 [= \<expr\>], ...])
 ///
 /// # Examples
 ///
 /// ```ignore
-/// use descent::expr::{Var, Par, ExprStatic};
+/// use descent::expr::{Var, Par};
 /// let x = Var(0);
 /// let y = Var(1);
 /// let a = Par(0);
@@ -719,7 +719,7 @@ pub fn expr(input: TokenStream) -> TokenStream {
             structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
         }
     }
-    structure.extend(TokenStream::from_str("descent::expr::ExprStatic").unwrap().into_iter());
+    structure.extend(TokenStream::from_str("descent::expr::fixed::ExprFix").unwrap().into_iter());
     structure.push(TokenTree::Group(Group::new(Delimiter::Brace, body.into_iter().collect())));
 
     let mut ret = Vec::new();

@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::expr::{Expression, Par, Retrieve, Store, Var, ID};
+use crate::expr::{Expression, Var, Par, Retrieve, Store, ID};
 
 //pub enum VarType {
 //    Continuous,
@@ -74,25 +74,25 @@ impl Solution {
     /// Calculate the value of an expression using the solution.
     pub fn value(&self, expr: &Expression) -> f64 {
         match expr {
-            Expression::Expr(e, _) => {
-                let mut ns = Vec::new();
-                e.eval(&self.store, &mut ns)
-            }
-            Expression::ExprSum(es) => {
-                let mut ns = Vec::new();
-                let mut val = 0.0;
-                for (e, _) in es {
-                    val += e.eval(&self.store, &mut ns);
-                }
-                val
-            }
-            Expression::ExprStatic(e) => {
+            Expression::ExprFix(e) => {
                 (e.f)(&self.store.vars, &self.store.pars)
             }
-            Expression::ExprStaticSum(es) => {
+            Expression::ExprFixSum(es) => {
                 let mut val = 0.0;
                 for e in es {
                     val += (e.f)(&self.store.vars, &self.store.pars);
+                }
+                val
+            }
+            Expression::ExprDyn(e) => {
+                let mut ns = Vec::new();
+                e.expr.eval(&self.store, &mut ns)
+            }
+            Expression::ExprDynSum(es) => {
+                let mut ns = Vec::new();
+                let mut val = 0.0;
+                for e in es {
+                    val += e.expr.eval(&self.store, &mut ns);
                 }
                 val
             }

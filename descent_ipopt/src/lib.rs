@@ -10,8 +10,9 @@
 
 mod ipopt;
 
-use descent::expr::{Column, Expr, Expression, Retrieve, WorkSpace};
 use descent::expr::{Par, Var, ID};
+use descent::expr::{Expression, Retrieve, Column};
+use descent::expr::dynam::WorkSpace;
 use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
 use fnv::FnvHashMap;
@@ -89,7 +90,7 @@ impl Default for IpoptModel {
                 pars: Vec::new(),
                 cons: Vec::new(),
                 obj: Objective {
-                    expr: Expr::from(0.0).into(),
+                    expr: descent::expr::dynam::Expr::from(0.0).into(),
                 },
             },
             cache: None,
@@ -272,17 +273,13 @@ impl IpoptModel {
                 cache.cons_const.clear();
                 for c in &self.model.cons {
                     match &c.expr {
-                        Expression::Expr(expr, info) => {
-                            cache.cons_const.push(expr.auto_const(
-                                &info,
-                                &sol.store,
-                                &mut cache.ws,
-                            ));
+                        Expression::ExprDyn(e) => {
+                            cache.cons_const.push(e.auto_const(&sol.store, &mut cache.ws));
                         }
-                        Expression::ExprSum(es) => {
+                        Expression::ExprDynSum(es) => {
                             let mut col = Column::new();
-                            for (expr, info) in es {
-                                col.sum_concat(expr.auto_const(info, &sol.store, &mut cache.ws));
+                            for e in es {
+                                col.sum_concat(e.auto_const(&sol.store, &mut cache.ws));
                             }
                             cache.cons_const.push(col);
                         }
@@ -294,13 +291,12 @@ impl IpoptModel {
 
                 cache.obj_const = Column::new();
                 match &self.model.obj.expr {
-                    Expression::Expr(expr, info) => {
-                        cache.obj_const = expr.auto_const(&info, &sol.store, &mut cache.ws);
+                    Expression::ExprDyn(e) => {
+                        cache.obj_const = e.auto_const(&sol.store, &mut cache.ws);
                     }
-                    Expression::ExprSum(es) => {
-                        for (expr, info) in es {
-                            cache.obj_const.sum_concat(expr.auto_const(
-                                info,
+                    Expression::ExprDynSum(es) => {
+                        for e in es {
+                            cache.obj_const.sum_concat(e.auto_const(
                                 &sol.store,
                                 &mut cache.ws,
                             ));
@@ -386,39 +382,7 @@ impl Sparsity {
         let mut v_hes = Vec::new();
         let mut v_jac = Vec::new();
         match expr {
-            Expression::Expr(_, info) => {
-                v_jac.extend(info.lin.iter().map(|i| self.jac_index((cid, *i))));
-                v_jac.extend(info.nlin.iter().map(|i| self.jac_index((cid, *i))));
-                v_hes.extend(
-                    info.quad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                );
-                v_hes.extend(
-                    info.nquad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                );
-            }
-            Expression::ExprSum(es) => {
-                for (_, info) in es {
-                    v_jac.extend(info.lin.iter().map(|i| self.jac_index((cid, *i))));
-                    v_hes.extend(
-                        info.quad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                    );
-                }
-                for (_, info) in es {
-                    v_jac.extend(info.nlin.iter().map(|i| self.jac_index((cid, *i))));
-                    v_hes.extend(
-                        info.nquad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                    );
-                }
-            }
-            Expression::ExprStatic(e) => {
+            Expression::ExprFix(e) => {
                 v_jac.extend(e.d1_sparsity.iter().map(|Var(v)| self.jac_index((cid, *v))));
                 v_hes.extend(
                     e.d2_sparsity
@@ -426,13 +390,45 @@ impl Sparsity {
                         .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
                 );
             }
-            Expression::ExprStaticSum(es) => {
+            Expression::ExprFixSum(es) => {
                 for e in es {
                     v_jac.extend(e.d1_sparsity.iter().map(|Var(v)| self.jac_index((cid, *v))));
                     v_hes.extend(
                         e.d2_sparsity
                             .iter()
                             .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
+                    );
+                }
+            }
+            Expression::ExprDyn(e) => {
+                v_jac.extend(e.info.lin.iter().map(|i| self.jac_index((cid, *i))));
+                v_jac.extend(e.info.nlin.iter().map(|i| self.jac_index((cid, *i))));
+                v_hes.extend(
+                    e.info.quad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
+                );
+                v_hes.extend(
+                    e.info.nquad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
+                );
+            }
+            Expression::ExprDynSum(es) => {
+                for e in es {
+                    v_jac.extend(e.info.lin.iter().map(|i| self.jac_index((cid, *i))));
+                    v_hes.extend(
+                        e.info.quad
+                            .iter()
+                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
+                    );
+                }
+                for e in es {
+                    v_jac.extend(e.info.nlin.iter().map(|i| self.jac_index((cid, *i))));
+                    v_hes.extend(
+                        e.info.nquad
+                            .iter()
+                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
                     );
                 }
             }
@@ -444,47 +440,47 @@ impl Sparsity {
     fn add_obj(&mut self, expr: &Expression) {
         let mut v = Vec::new();
         match expr {
-            Expression::Expr(_, info) => {
-                v.extend(
-                    info.quad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                );
-                v.extend(
-                    info.nquad
-                        .iter()
-                        .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                );
-            }
-            Expression::ExprSum(es) => {
-                for (_, info) in es {
-                    v.extend(
-                        info.quad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                    );
-                }
-                for (_, info) in es {
-                    v.extend(
-                        info.nquad
-                            .iter()
-                            .map(|(i, j)| self.hes_index((info.nlin[*i], info.nlin[*j]))),
-                    );
-                }
-            }
-            Expression::ExprStatic(e) => {
+            Expression::ExprFix(e) => {
                 v.extend(
                     e.d2_sparsity
                         .iter()
                         .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
                 );
             }
-            Expression::ExprStaticSum(es) => {
+            Expression::ExprFixSum(es) => {
                 for e in es {
                     v.extend(
                         e.d2_sparsity
                             .iter()
                             .map(|(Var(v1), Var(v2))| self.hes_index((*v1, *v2))),
+                    );
+                }
+            }
+            Expression::ExprDyn(e) => {
+                v.extend(
+                    e.info.quad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
+                );
+                v.extend(
+                    e.info.nquad
+                        .iter()
+                        .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
+                );
+            }
+            Expression::ExprDynSum(es) => {
+                for e in es {
+                    v.extend(
+                        e.info.quad
+                            .iter()
+                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
+                    );
+                }
+                for e in es {
+                    v.extend(
+                        e.info.nquad
+                            .iter()
+                            .map(|(i, j)| self.hes_index((e.info.nlin[*i], e.info.nlin[*j]))),
                     );
                 }
             }
@@ -585,21 +581,7 @@ impl<'a> Retrieve for Store<'a> {
 /// Need to initialise the columns to correct lengths for static expr's
 fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
     match &cb_data.model.obj.expr {
-        Expression::Expr(expr, info) => {
-            cb_data.cache.obj = expr.auto_dynam(info, store, &mut cb_data.cache.ws);
-        }
-        Expression::ExprSum(es) => {
-            cb_data.cache.obj.val = 0.0;
-            cb_data.cache.obj.der1.clear();
-            cb_data.cache.obj.der2.clear();
-            for (expr, info) in es {
-                cb_data
-                    .cache
-                    .obj
-                    .sum_concat(expr.auto_dynam(info, store, &mut cb_data.cache.ws));
-            }
-        }
-        Expression::ExprStatic(expr) => {
+        Expression::ExprFix(expr) => {
             cb_data.cache.obj.val = (expr.all)(
                 store.vars,
                 store.pars,
@@ -607,7 +589,7 @@ fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
                 &mut cb_data.cache.obj.der2,
             );
         }
-        Expression::ExprStaticSum(es) => {
+        Expression::ExprFixSum(es) => {
             cb_data.cache.obj.val = 0.0;
             let mut der1_off = 0;
             let mut der2_off = 0;
@@ -624,6 +606,20 @@ fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
                 der2_off += d2_len;
             }
         }
+        Expression::ExprDyn(e) => {
+            cb_data.cache.obj = e.auto_dynam(store, &mut cb_data.cache.ws);
+        }
+        Expression::ExprDynSum(es) => {
+            cb_data.cache.obj.val = 0.0;
+            cb_data.cache.obj.der1.clear();
+            cb_data.cache.obj.der2.clear();
+            for e in es {
+                cb_data
+                    .cache
+                    .obj
+                    .sum_concat(e.auto_dynam(store, &mut cb_data.cache.ws));
+            }
+        }
     }
 }
 
@@ -631,21 +627,10 @@ fn solve_obj(cb_data: &mut IpoptCBData, store: &Store) {
 fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
     for (cc, c) in cb_data.cache.cons.iter_mut().zip(cb_data.model.cons.iter()) {
         match &c.expr {
-            Expression::Expr(expr, info) => {
-                *cc = expr.auto_dynam(info, store, &mut cb_data.cache.ws);
-            }
-            Expression::ExprSum(es) => {
-                cc.val = 0.0;
-                cc.der1.clear();
-                cc.der2.clear();
-                for (expr, info) in es {
-                    cc.sum_concat(expr.auto_dynam(info, store, &mut cb_data.cache.ws));
-                }
-            }
-            Expression::ExprStatic(expr) => {
+            Expression::ExprFix(expr) => {
                 cc.val = (expr.all)(store.vars, store.pars, &mut cc.der1, &mut cc.der2);
             }
-            Expression::ExprStaticSum(es) => {
+            Expression::ExprFixSum(es) => {
                 cc.val = 0.0;
                 let mut der1_off = 0;
                 let mut der2_off = 0;
@@ -660,6 +645,17 @@ fn solve_cons(cb_data: &mut IpoptCBData, store: &Store) {
                     );
                     der1_off += d1_len;
                     der2_off += d2_len;
+                }
+            }
+            Expression::ExprDyn(e) => {
+                *cc = e.auto_dynam(store, &mut cb_data.cache.ws);
+            }
+            Expression::ExprDynSum(es) => {
+                cc.val = 0.0;
+                cc.der1.clear();
+                cc.der2.clear();
+                for e in es {
+                    cc.sum_concat(e.auto_dynam(store, &mut cb_data.cache.ws));
                 }
             }
         }
@@ -958,7 +954,7 @@ extern "C" fn l_hess(
 mod tests {
     extern crate test;
     use super::*;
-    use descent::expr::NumOps;
+    use descent::expr::dynam::NumOps;
     #[test]
     fn univar_problem() {
         let mut m = IpoptModel::new();
@@ -1053,7 +1049,7 @@ mod tests {
             xs.push(m.add_var(-10.0, 10.0, 0.0));
         }
 
-        let mut obj = Expr::from(0.0);
+        let mut obj = descent::expr::dynam::Expr::from(0.0);
         for &x in &xs {
             obj = obj + (x - 1.0).powi(2);
         }
@@ -1075,7 +1071,7 @@ mod tests {
         for _i in 0..n {
             xs.push(m.add_var(-1.5, 0.0, -0.5));
         }
-        let mut obj = Expr::from(0.0);
+        let mut obj = descent::expr::dynam::Expr::from(0.0);
         for &x in &xs {
             obj = obj + (x - 1.0).powi(2);
         }

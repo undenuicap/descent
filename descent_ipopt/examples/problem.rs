@@ -7,7 +7,7 @@
 // except according to those terms.
 //
 // NumOps trait required to be in scope to use cos and powi
-use descent::expr::{Expr, NumOps};
+use descent::expr::dynam::{Expr, NumOps};
 use descent::model::Model;
 use descent_ipopt::IpoptModel;
 
