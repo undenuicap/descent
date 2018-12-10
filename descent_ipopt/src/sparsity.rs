@@ -10,6 +10,10 @@ use descent::expr::Expression;
 use descent::expr::{Var, ID};
 use fnv::FnvHashMap;
 
+/// Sparsity of Jacobian and Hessian.
+///
+/// The sparsity mapping is produced by adding the constraints and the
+/// objective to this structure dynamically.
 #[derive(Debug, Default)]
 pub(crate) struct Sparsity {
     pub(crate) jac_sp: FnvHashMap<(usize, ID), usize>,
@@ -24,16 +28,26 @@ impl Sparsity {
         Sparsity::default()
     }
 
+    /// Get position of constraint and variable combination in Jacobian sparse
+    /// representation.
+    ///
+    /// Creates a new Jacobian entry if it hasn't already been used.
     fn jac_index(&mut self, eid: (usize, ID)) -> usize {
         let id = self.jac_sp.len(); // incase need to create new
         *self.jac_sp.entry(eid).or_insert(id)
     }
 
+    /// Get position of pair of variables in Hessian sparse representation.
+    ///
+    /// Creates a new Hessian entry if it hasn't already been used.
     fn hes_index(&mut self, eid: (ID, ID)) -> usize {
         let id = self.hes_sp.len(); // incase need to create new
         *self.hes_sp.entry(eid).or_insert(id)
     }
 
+    /// Account for constraint in sparsity.
+    ///
+    /// The contributions to the Hessian and Jacobian sparsities are calculated.
     pub(crate) fn add_con(&mut self, expr: &Expression) {
         let cid = self.jac_cons_inds.len();
         let mut v_hes = Vec::new();
@@ -98,6 +112,11 @@ impl Sparsity {
         self.jac_cons_inds.push(v_jac);
     }
 
+    /// Account for objective in sparsity.
+    ///
+    /// The objective only appears in the Hessian, and the gradient expects a
+    /// dense reply with variables in order, so nothing needs to be additionally
+    /// stored for that.
     pub(crate) fn add_obj(&mut self, expr: &Expression) {
         let mut v = Vec::new();
         match expr {

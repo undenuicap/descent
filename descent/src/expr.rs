@@ -74,7 +74,11 @@ pub enum Expression {
 }
 
 impl Expression {
-    pub fn lin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+    /// Iterate over variables that we want to treat as linear.
+    ///
+    /// Implemtation assumes all varialbes in `ExprFix` are non-linear,
+    /// because it will have minimal extra overhead doing so.
+    pub fn lin_iter<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
         match self {
             Expression::ExprFix(_) => Box::new(std::iter::empty()),
             Expression::ExprFixSum(_) => Box::new(std::iter::empty()),
@@ -85,7 +89,11 @@ impl Expression {
         }
     }
 
-    pub fn nlin<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+    /// Iterate over variables that we want to treat as non-linear.
+    ///
+    /// Can contain variables at that are actually linear if we don't want
+    /// special treatment for them.
+    pub fn nlin_iter<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
         match self {
             Expression::ExprFix(e) => Box::new(e.d1_sparsity.iter().map(|Var(v)| *v)),
             Expression::ExprFixSum(es) => Box::new(
@@ -100,8 +108,11 @@ impl Expression {
         }
     }
 
-    // Can count same variable twice if one of the summation types.
-    pub fn d1_nz(&self) -> usize {
+    /// Number of entries calculated for first derivative.
+    ///
+    /// These will typically be the non-zeros but not necessarily. Also, one
+    /// variable could be accounted for twice if one of the summation types.
+    pub fn d1_len(&self) -> usize {
         match self {
             Expression::ExprFix(e) => e.d1_sparsity.len(),
             Expression::ExprFixSum(es) => {
@@ -122,8 +133,11 @@ impl Expression {
         }
     }
 
-    // Can count same variable twice if one of the summation types.
-    pub fn d2_nz(&self) -> usize {
+    /// Number of entries calculated for second derivative.
+    ///
+    /// These will typically be the non-zeros but not necessarily. Also, pair
+    /// of variables could be accounted for twice if one of the summation types.
+    pub fn d2_len(&self) -> usize {
         match self {
             Expression::ExprFix(e) => e.d2_sparsity.len(),
             Expression::ExprFixSum(es) => {

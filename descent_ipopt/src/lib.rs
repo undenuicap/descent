@@ -170,13 +170,13 @@ impl IpoptModel {
         };
         cache.cons.resize(ncons, Column::new());
 
-        // Need to allocate memory for static expressions
-        // Don't need this for ExprDyn as done dynamically, but doing anyway
-        cache.obj.der1.resize(self.model.obj.expr.d1_nz(), 0.0);
-        cache.obj.der2.resize(self.model.obj.expr.d2_nz(), 0.0);
+        // Need to allocate memory for fixed expressions.
+        // Don't need this for ExprDyn as done dynamically, but doing anyway.
+        cache.obj.der1.resize(self.model.obj.expr.d1_len(), 0.0);
+        cache.obj.der2.resize(self.model.obj.expr.d2_len(), 0.0);
         for (cc, c) in cache.cons.iter_mut().zip(self.model.cons.iter()) {
-            cc.der1.resize(c.expr.d1_nz(), 0.0);
-            cc.der2.resize(c.expr.d2_nz(), 0.0);
+            cc.der1.resize(c.expr.d1_len(), 0.0);
+            cc.der2.resize(c.expr.d2_len(), 0.0);
         }
 
         self.prob = Some(IpoptProblem { prob });
@@ -271,39 +271,10 @@ impl IpoptModel {
                 // not affect the values).
                 cache.cons_const.clear();
                 for c in &self.model.cons {
-                    match &c.expr {
-                        Expression::ExprDyn(e) => {
-                            cache
-                                .cons_const
-                                .push(e.auto_const(&sol.store, &mut cache.ws));
-                        }
-                        Expression::ExprDynSum(es) => {
-                            let mut col = Column::new();
-                            for e in es {
-                                col.sum_concat(e.auto_const(&sol.store, &mut cache.ws));
-                            }
-                            cache.cons_const.push(col);
-                        }
-                        _ => {
-                            cache.cons_const.push(Column::new());
-                        }
-                    }
+                    cache.cons_const.push(evaluate_const(&c.expr, &sol.store, &mut cache.ws));
                 }
 
-                cache.obj_const = Column::new();
-                match &self.model.obj.expr {
-                    Expression::ExprDyn(e) => {
-                        cache.obj_const = e.auto_const(&sol.store, &mut cache.ws);
-                    }
-                    Expression::ExprDynSum(es) => {
-                        for e in es {
-                            cache
-                                .obj_const
-                                .sum_concat(e.auto_const(&sol.store, &mut cache.ws));
-                        }
-                    }
-                    _ => {}
-                }
+                cache.obj_const = evaluate_const(&self.model.obj.expr, &sol.store, &mut cache.ws);
 
                 let mut cb_data = IpoptCBData {
                     model: &self.model,
@@ -430,6 +401,27 @@ impl<'a> Retrieve for Store<'a> {
 
     fn par(&self, p: Par) -> f64 {
         self.pars[p.0]
+    }
+}
+
+/// Produces const evaluation of an expression.
+fn evaluate_const<R>(expr: &Expression, store: &R, mut ws: &mut WorkSpace) -> Column
+where R: Retrieve,
+{
+    match expr {
+        Expression::ExprDyn(e) => {
+            e.auto_const(store, &mut ws)
+        }
+        Expression::ExprDynSum(es) => {
+            let mut col = Column::new();
+            for e in es {
+                col.sum_concat(e.auto_const(store, &mut ws));
+            }
+            col
+        }
+        _ => { // Others don't support constant evaluations.
+            Column::new()
+        }
     }
 }
 
@@ -562,10 +554,10 @@ extern "C" fn f_grad(
     }
 
     // f_grad expects variables in order
-    for (i, v) in cb_data.model.obj.expr.lin().enumerate() {
+    for (i, v) in cb_data.model.obj.expr.lin_iter().enumerate() {
         values[v] += cb_data.cache.obj_const.der1[i];
     }
-    for (i, v) in cb_data.model.obj.expr.nlin().enumerate() {
+    for (i, v) in cb_data.model.obj.expr.nlin_iter().enumerate() {
         values[v] += cb_data.cache.obj.der1[i];
     }
     1
