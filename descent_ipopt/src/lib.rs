@@ -271,7 +271,9 @@ impl IpoptModel {
                 // not affect the values).
                 cache.cons_const.clear();
                 for c in &self.model.cons {
-                    cache.cons_const.push(evaluate_const(&c.expr, &sol.store, &mut cache.ws));
+                    cache
+                        .cons_const
+                        .push(evaluate_const(&c.expr, &sol.store, &mut cache.ws));
                 }
 
                 cache.obj_const = evaluate_const(&self.model.obj.expr, &sol.store, &mut cache.ws);
@@ -360,7 +362,9 @@ impl Model for IpoptModel {
         self.model.obj = Objective { expr: expr.into() };
     }
 
-    /// Set parameter to value
+    /// Set parameter to value.
+    ///
+    /// # Panics
     ///
     /// Expect a panic if parameter not in model.
     fn set_par(&mut self, par: Par, val: f64) {
@@ -368,7 +372,9 @@ impl Model for IpoptModel {
         self.model.pars[id].val = val;
     }
 
-    /// Set variable initial value
+    /// Set variable initial value.
+    ///
+    /// # Panics
     ///
     /// Expect a panic if variable not in model.
     fn set_init(&mut self, var: Var, init: f64) {
@@ -376,12 +382,26 @@ impl Model for IpoptModel {
         self.model.vars[id].init = init;
     }
 
+    /// Solve the model.
+    ///
+    /// # Panics
+    ///
+    /// Expression supplied to the model should only contain valid `Var` and
+    /// `Par` values, i.e. those that were returned by the `add_var` / `add_par`
+    /// methods by this model. Panic can occur here if not.
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
         let sol = Solution::new();
         self.ipopt_solve(sol)
     }
 
+    /// Solve the model using the supplied solution as a warm start.
+    ///
+    /// # Panics
+    ///
+    /// Expression supplied to the model should only contain valid `Var` and
+    /// `Par` values, i.e. those that were returned by the `add_var` / `add_par`
+    /// methods by this model. Panic can occur here if not.
     fn warm_solve(&mut self, sol: Solution) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
         // Should set up warm start stuff
@@ -406,12 +426,11 @@ impl<'a> Retrieve for Store<'a> {
 
 /// Produces const evaluation of an expression.
 fn evaluate_const<R>(expr: &Expression, store: &R, mut ws: &mut WorkSpace) -> Column
-where R: Retrieve,
+where
+    R: Retrieve,
 {
     match expr {
-        Expression::ExprDyn(e) => {
-            e.auto_const(store, &mut ws)
-        }
+        Expression::ExprDyn(e) => e.auto_const(store, &mut ws),
         Expression::ExprDynSum(es) => {
             let mut col = Column::new();
             for e in es {
@@ -419,7 +438,8 @@ where R: Retrieve,
             }
             col
         }
-        _ => { // Others don't support constant evaluations.
+        _ => {
+            // Others don't support constant evaluations.
             Column::new()
         }
     }
@@ -428,12 +448,7 @@ where R: Retrieve,
 fn evaluate(expr: &Expression, store: &Store, col: &mut Column, mut ws: &mut WorkSpace) {
     match expr {
         Expression::ExprFix(expr) => {
-            col.val = (expr.all)(
-                store.vars,
-                store.pars,
-                &mut col.der1,
-                &mut col.der2,
-            );
+            col.val = (expr.all)(store.vars, store.pars, &mut col.der1, &mut col.der2);
         }
         Expression::ExprFixSum(es) => {
             col.val = 0.0;
@@ -468,7 +483,12 @@ fn evaluate(expr: &Expression, store: &Store, col: &mut Column, mut ws: &mut Wor
 
 /// Need to initialise the columns to correct lengths for static expr's
 fn evaluate_obj(cb_data: &mut IpoptCBData, store: &Store) {
-    evaluate(&cb_data.model.obj.expr, &store, &mut cb_data.cache.obj, &mut cb_data.cache.ws);
+    evaluate(
+        &cb_data.model.obj.expr,
+        &store,
+        &mut cb_data.cache.obj,
+        &mut cb_data.cache.ws,
+    );
 }
 
 /// Need to initialise the columns to correct lengths for static expr's

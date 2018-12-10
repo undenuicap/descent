@@ -6,6 +6,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Expression, variable and parameter modelling.
+//!
+//! General types used in expressions. See sub-modules for details of working
+//! with either fixed (compile-time) or dynamically (run-time) constructed
+//! expressions.
+
 pub mod dynam;
 pub mod fixed;
 
@@ -66,6 +72,17 @@ impl Retrieve for Store {
     }
 }
 
+/// Most general representation of an expression.
+///
+/// This wraps up fixed and dynamic types of expressions and their respective
+/// summation forms. The user typically doesn't directly need to care about
+/// this type unless they want a way to easily store different types of
+/// expressions in the same collection. See the [fixed](fixed/index.html) or
+/// [dynam](dynam/index.html) sub-modules for details about constructing and
+/// working with expressions.
+///
+/// Only a few methods are implemented directly for this type. More could be
+/// developed to provide a cleaner interface to solvers.
 pub enum Expression {
     ExprFix(ExprFix),
     ExprFixSum(ExprFixSum),
@@ -135,7 +152,7 @@ impl Expression {
 
     /// Number of entries calculated for second derivative.
     ///
-    /// These will typically be the non-zeros but not necessarily. Also, pair
+    /// These will typically be the non-zeros but not necessarily. Also, pairs
     /// of variables could be accounted for twice if one of the summation types.
     pub fn d2_len(&self) -> usize {
         match self {

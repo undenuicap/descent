@@ -6,10 +6,37 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Dynamically constructed expressions.
+//!
+//! These expressions offer the greatest flexibility in how they can be
+//! constructed at runtime. Forward and reverse automatic differentiation
+//! techniques have been implemented for calculating expression first and
+//! second derivatives. They are however much slower than the more direct
+//! fixed expression types (in [fixed](../fixed/index.html) module) which allow
+//! for greater compiler optimisation of the derivative calculations.
+//!
+//! # Examples
+//!
+//! See [Expr](struct.Expr.html) for more details.
+//!
+//! ```
+//! use descent::expr::{Var, Par};
+//! use descent::expr::dynam::NumOps; // required to bring in powi usage
+//! let x = Var(0);
+//! let y = Var(1);
+//! let p = Par(0);
+//!
+//! let e = p * x - (5.0 * y.powi(2) + 4.0);
+//! ```
+
 use super::{Column, Expression, Par, Retrieve, Var, ID};
 use std::collections::{HashMap, HashSet};
 use std::ops::{Add, Mul, Sub};
 
+/// Snapshot of a dynamically constructed expression `Expr`.
+///
+/// This wraps the final form of an `Expr` alongside expensive to compute
+/// "sparsity" information about the expression.
 pub struct ExprDyn {
     pub expr: Expr,
     pub info: ExprInfo,
@@ -23,8 +50,28 @@ impl From<ExprDyn> for Expression {
 
 /// Represents the sum of multiple dynamic expressions.
 ///
-/// Breaking up expressions in to smaller sums of expressions can improve the
-/// performance of AD techniques for large sums.
+/// Breaking up expressions into smaller sums of expressions can improve the
+/// performance of AD techniques for large sums. If an `Expr` consists of
+/// a large sum of terms, then when converted into an `Expression`, it will
+/// automatically get converted into this type. Alternatively, this type can
+/// be explicitly utilised as the addition operator is implement for it and
+/// `Expr`:
+///
+/// ```
+/// use descent::expr::Var;
+/// use descent::expr::dynam::ExprDynSum;
+/// let xs: Vec<Var> = (0..5).into_iter().map(|i| Var(i)).collect();
+///
+/// let mut e = ExprDynSum::new();
+/// for &x in &xs {
+///     e = e + 3.0 * x;
+/// }
+///
+/// let mut e = ExprDynSum::new();
+/// for &x in &xs {
+///     e = e + x.into(); // variable needs to be converted to `Expr` first here
+/// }
+/// ```
 pub type ExprDynSum = Vec<ExprDyn>;
 
 impl From<Expr> for ExprDyn {
@@ -58,11 +105,11 @@ impl std::ops::Add<Expr> for ExprDynSum {
     }
 }
 
-/// Information about a `Expr` for guiding AD process.
+/// Sparsity and other information about an `Expr` for guiding AD process.
 ///
 /// Linear and quadratic respective first and second derivatives only need to
-/// be computed once on parameter change.  The `usize` pairs represent indices
-/// into `nlin`.  They are local variable mappings.
+/// be computed once on parameter change. The `usize` pairs represent indices
+/// into `nlin`. They are local variable mappings.
 ///
 /// The contracts from `Degree` are expected to be held.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -150,28 +197,40 @@ pub(crate) enum Oper {
     Float(f64),
 }
 
-/// Representation of mathematical expression.
+/// An expression that can be dynamically constructed.
 ///
-/// The following conventions are used for function argument names:
+/// Operator overloading is implemented for this struct alongside `Var`, `Par`
+/// and `f64`. Once the final expression has been constructed, it can be
+/// converted into a `ExprDyn`, which locks down the final form of the
+/// expression, and calculates some additional information about its "sparsity"
+/// (which is expensive to do, some only done once).
 ///
-/// - `v1` variable for first derivative
-/// - `v2` variables in second derivative
-/// - `vl2` variables for second derivative (list form)
-/// - `n` the value of a node
-/// - `nd` a first derivative for node
-/// - `na1` the "first" adjoint for node
-/// - `na2` a "second" adjoint for node
+/// An `Expr` shouldn't be directly constructed, instead it is produced by
+/// applying a valid operator (`+`, `-`, `*`, `powi`, `sin`, `cos`) to either
+/// an existing operator, or to a `Var` or `Par` value.
 ///
-/// These are postfixed with an `s` when a slice/vec of such values are
-/// supplied.
+/// ```
+/// use descent::expr::{Var, Par};
+/// use descent::expr::dynam::NumOps; // required to bring in powi usage
+/// let x = Var(0);
+/// let y = Var(1);
+/// let p = Par(0);
 ///
-/// In the mathematical working `n` represents a node, and it has the set of
-/// operands js.
+/// let e = p * x - (5.0 * y.powi(2) + 4.0); // this produces an `Expr`
+/// ```
 ///
-// In general an expression needs to be constructed so that the operation
-// references point to a valid location. We should limit the interface so that
-// it becomes difficult/impossible for someone outside this mod to create an
-// invalid expression.
+/// One exception to this is for convenience, e.g., summing a bunch of terms:
+///
+/// ```
+/// use descent::expr::Var;
+/// use descent::expr::dynam::Expr;
+/// let xs: Vec<Var> = (0..5).into_iter().map(|i| Var(i)).collect();
+///
+/// let mut e = Expr::from(0.0);
+/// for &x in &xs {
+///     e = e + x;
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct Expr {
     ops: Vec<Oper>,
@@ -197,6 +256,21 @@ impl From<Expr> for Expression {
     }
 }
 
+// The following conventions are used for function argument names:
+//
+// - `v1` variable for first derivative
+// - `v2` variables in second derivative
+// - `vl2` variables for second derivative (list form)
+// - `n` the value of a node
+// - `nd` a first derivative for node
+// - `na1` the "first" adjoint for node
+// - `na2` a "second" adjoint for node
+//
+// These are postfixed with an `s` when a slice/vec of such values are
+// supplied.
+//
+// In the mathematical working `n` represents a node, and it has the set of
+// operands js.
 impl Expr {
     /// Value of the expression.
     pub fn eval<R>(&self, ret: &R, ns: &mut Vec<f64>) -> f64
@@ -853,12 +927,7 @@ impl ExprDyn {
     /// Constant derivatives by method auto selection.
     ///
     /// It is the users resposibility to pass in a valid `Retrieve` for the
-    /// variables and parameters present in the expression. Likewise the
-    /// `ExprInfo` should be for the actual expression, and up to date.
-    ///
-    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and
-    /// call it on demand.  Might have to have some internal state to track
-    /// if Expr has been changed and this needs to be called again.
+    /// variables and parameters present in the expression.
     pub fn auto_const<R>(&self, store: &R, ws: &mut WorkSpace) -> Column
     where
         R: Retrieve,
@@ -885,12 +954,7 @@ impl ExprDyn {
     /// Dynamic values/derivatives by method auto selection.
     ///
     /// It is the users resposibility to pass in a valid `Retrieve` for the
-    /// variables and parameters present in the expression.  Likewise the
-    /// `ExprInfo` should be for the actual expression, and up to date.
-    ///
-    /// Should consider adding `ExprInfo` to `Expr`. Make it an option and
-    /// call it on demand.  Might have to have some internal state to track
-    /// if Expr has been changed and this needs to be called again.
+    /// variables and parameters present in the expression.
     pub fn auto_dynam<R>(&self, store: &R, ws: &mut WorkSpace) -> Column
     where
         R: Retrieve,
@@ -1140,7 +1204,8 @@ impl From<i32> for Expr {
 }
 
 // Have to use trait because straight fn overloading not possible
-/// Trait for numerical overloading.
+/// Trait for using numeric operators such as `.powi(i32)`, `.cos()`, `.sin()`
+/// in dynamic expressions.
 pub trait NumOps {
     fn powi(self, p: i32) -> Expr;
     fn sin(self) -> Expr;

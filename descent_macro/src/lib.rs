@@ -568,50 +568,56 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
     false
 }
 
-/// Generate a ExprFix expression.
+/// Generate a [ExprFix](../ expression.
 ///
 /// expr!(\<expr\>; var1 [= \<expr\>], ...[; par1 [= \<expr\>], ...])
+///
+/// The macro body consists of 3 semicolon separated parts:
+///
+/// 1. A representation of the expression that you want to produce.
+/// 2. A comma separated list of variable names used in the expression body.
+/// 3. An optional comma separated list of parameter names used in the
+///    expression body.
+///
+/// The variable and parameter names must be simple identifiers. The
+/// identifiers must either be present in the environment as legitimate `Var`
+/// or `Par` values that can be copied into the expression, or the special
+/// syntax `name = expression` can be used in the list of variable or parameter
+/// names (parts 2 and 3) to automatically declare them in a local scope.
+///
+/// Constants and other expressions used in the expression are captured (moved)
+/// from the environment, similarly to a closure. There are in fact multiple
+/// closures being created behind the scenes, so anything that is captured
+/// needs to implement copy.
 ///
 /// # Examples
 ///
 /// ```ignore
+/// #![feature(proc_macro_hygiene)] // need to turn on nightly feature
 /// use descent::expr::{Var, Par};
+/// use descent_macro::expr;
 /// let x = Var(0);
 /// let y = Var(1);
-/// let a = Par(0);
-/// let e = expr!(a * x + y * y; x, y; a);
+/// let p = Par(0);
+/// let c = 1.0;
+/// let e = expr!(p * x + y * y + c; x, y; p);
 /// ```
 ///
-/// Variables and parameters need to declared. Constants and other expressions
-/// are captured (moved) from the environment, similarly to a closure. There
-/// are in fact multiple closures being created, so anything that is captured
-/// needs to implement copy.
-///
-/// There is an option to assign a variable / parameter a value from the
-/// environment, to make it convenient to use variables and parameters that
-/// appear in more complex structures:
+/// Syntax for scoped declaration of variables / parameters:
 ///
 /// ```ignore
+/// #![feature(proc_macro_hygiene)] // need to turn on nightly feature
+/// use descent::expr::{Var, Par};
+/// use descent_macro::expr;
 /// let vars = [Var(0), Var(1)];
 /// let pars = [Par(0)];
-/// let e = expr!(a * x + y * y; x = vars[0], y = vars[1]; a = pars[0]);
-/// ```
-///
-/// This avoids having to manually do a separate:
-///
-/// ```ignore
-/// let x = vars[0];
-/// ```
-///
-/// This convenience currently hasn't been extended to constant terms. So we
-/// still need to do the following so we don't try to move the vector of
-/// constants multiple times:
-///
-/// ```ignore
 /// let constant = vec![1.0, 2.0];
 /// let c = constant[0];
-/// let e = expr!(a * x + y * y + c; x, y; a);
+/// let e = expr!(a * x + y * y + c; x = vars[0], y = vars[1]; a = pars[0]);
 /// ```
+/// This convenience currently hasn't been extended to constant terms. So in
+/// the above we need to explicitly declare `c` in the environment so that the
+/// closures don't try to move the whole `constant` vector multiple times.
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
     let invalid_ident = ["__v", "__p", "__d1", "__d2"].iter().cloned().collect();
@@ -624,10 +630,11 @@ pub fn expr(input: TokenStream) -> TokenStream {
         panic!("Expected variables to be specified");
     }
 
-    let mut p = IdenVec::new();
-    if split.len() == 3 {
-        p = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
-    }
+    let p = if split.len() == 3 {
+        prepare_idents(separate_on_punct(split.pop().unwrap(), ','))
+    } else {
+        IdenVec::new()
+    };
     let v = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
     let mut v_set = HashSet::new();
     let mut p_set = HashSet::new();
@@ -657,9 +664,8 @@ pub fn expr(input: TokenStream) -> TokenStream {
     // all combined body
     let mut all_body = Vec::new();
 
-    // d1 & d2 closure
-    let mut body1 = Vec::new();
-    let mut body2 = Vec::new();
+    let mut body1 = Vec::new(); // d1 body
+    let mut body2 = Vec::new(); // d2 body
     let mut d1_nz = Vec::new();
     let mut d2_nz = Vec::new();
     for (i, (k1, _)) in v.iter().enumerate() {
@@ -696,17 +702,6 @@ pub fn expr(input: TokenStream) -> TokenStream {
     all_body.extend(body1.clone().into_iter());
     all_body.extend(body2.clone().into_iter());
 
-    let mut d1_clo = Vec::new();
-    d1_clo.extend(
-        TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d1: &mut[f64]|")
-            .unwrap()
-            .into_iter(),
-    );
-    d1_clo.push(TokenTree::Group(Group::new(
-        Delimiter::Brace,
-        body1.into_iter().collect(),
-    )));
-
     let mut body = Vec::new();
     for k in &d1_nz {
         body.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
@@ -717,17 +712,6 @@ pub fn expr(input: TokenStream) -> TokenStream {
     d1_spar.push(TokenTree::Group(Group::new(
         Delimiter::Bracket,
         body.into_iter().collect(),
-    )));
-
-    let mut d2_clo = Vec::new();
-    d2_clo.extend(
-        TokenStream::from_str("move |__v: &[f64], __p: &[f64], __d2: &mut[f64]|")
-            .unwrap()
-            .into_iter(),
-    );
-    d2_clo.push(TokenTree::Group(Group::new(
-        Delimiter::Brace,
-        body2.into_iter().collect(),
     )));
 
     let mut body = Vec::new();
@@ -781,20 +765,6 @@ pub fn expr(input: TokenStream) -> TokenStream {
     body.push(TokenTree::Group(Group::new(
         Delimiter::Parenthesis,
         f_clo.into_iter().collect(),
-    )));
-    body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
-
-    body.extend(TokenStream::from_str("d1: Box::new").unwrap().into_iter());
-    body.push(TokenTree::Group(Group::new(
-        Delimiter::Parenthesis,
-        d1_clo.into_iter().collect(),
-    )));
-    body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
-
-    body.extend(TokenStream::from_str("d2: Box::new").unwrap().into_iter());
-    body.push(TokenTree::Group(Group::new(
-        Delimiter::Parenthesis,
-        d2_clo.into_iter().collect(),
     )));
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 

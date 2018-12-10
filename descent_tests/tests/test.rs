@@ -27,24 +27,6 @@ fn it_works() {
 
     let ex = expr!((x * x - y) * b + k; x, y; k);
 
-    assert!((ex.f)(s.vars.as_slice(), s.pars.as_slice()) == -20.0);
-
-    let mut d1_out = vec![0.0, 0.0];
-
-    (ex.d1)(s.vars.as_slice(), s.pars.as_slice(), &mut d1_out);
-    assert!(d1_out[0] == 20.0);
-    assert!(d1_out[1] == -10.0);
-    assert!(ex.d1_sparsity.len() == 2);
-    assert!(ex.d1_sparsity[0] == x);
-    assert!(ex.d1_sparsity[1] == y);
-
-    let mut d2_out = vec![0.0];
-
-    (ex.d2)(s.vars.as_slice(), s.pars.as_slice(), &mut d2_out);
-    assert!(d2_out[0] == 20.0);
-    assert!(ex.d2_sparsity.len() == 1);
-    assert!(ex.d2_sparsity[0] == (x, x));
-
     let mut d1_out = vec![0.0, 0.0];
     let mut d2_out = vec![0.0];
 
@@ -58,6 +40,11 @@ fn it_works() {
     assert!(d1_out[0] == 20.0);
     assert!(d1_out[1] == -10.0);
     assert!(d2_out[0] == 20.0);
+    assert!(ex.d1_sparsity.len() == 2);
+    assert!(ex.d1_sparsity[0] == x);
+    assert!(ex.d1_sparsity[1] == y);
+    assert!(ex.d2_sparsity.len() == 1);
+    assert!(ex.d2_sparsity[0] == (x, x));
 }
 
 #[test]

@@ -6,6 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Model interface for solvers.
+
 use crate::expr::{Expression, Par, Retrieve, Store, Var, ID};
 
 //pub enum VarType {
@@ -14,11 +16,18 @@ use crate::expr::{Expression, Par, Retrieve, Store, Var, ID};
 //    Binary,
 //}
 
-/// Constraint ID.
+/// Constraint identifier.
 #[derive(Debug, Clone, Copy)]
 pub struct Con(pub ID);
 
 /// Interface for a mathematical program with continuous variables.
+///
+/// # Panics
+///
+/// Expect a panic, either our of bounds or otherwise, if a variable or
+/// parameter is used in this model that was not directly returned by the
+/// `add_var` or `add_par` methods. Check individual implementations of trait
+/// for details of when these panics could occur.
 pub trait Model {
     /// Add variable to model with lower / upper bounds and initial value.
     fn add_var(&mut self, lb: f64, ub: f64, init: f64) -> Var;
@@ -50,19 +59,28 @@ pub trait Model {
 /// Status of the solution.
 #[derive(PartialEq, Debug)]
 pub enum SolutionStatus {
+    /// Problem successfully solved.
     Solved,
+    /// Problem appears to be infeasible.
     Infeasible,
+    /// An error occurred during the solve process.
     Error,
+    /// Other currrently unhandled solver status returned.
     Other,
 }
 
 /// Data for a valid solution.
 #[derive(Default)]
 pub struct Solution {
+    /// Objective value.
     pub obj_val: f64,
+    /// Store of variable and parameter values.
     pub store: Store,
+    /// Constraint Lagrange / KKT multipliers.
     pub con_mult: Vec<f64>,
+    /// Variable lower bound KKT multipliers.
     pub var_lb_mult: Vec<f64>,
+    /// Variable upper bound KKT multipliers.
     pub var_ub_mult: Vec<f64>,
 }
 
