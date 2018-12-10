@@ -12,7 +12,7 @@ use descent::expr::Store;
 use descent_macro::expr;
 
 #[test]
-fn it_works() {
+fn scoped_declarations() {
     let b = 10.0;
 
     let mut s = Store::new();
@@ -21,16 +21,16 @@ fn it_works() {
     let k = s.add_par(20.0);
 
     let vars = vec![x, y];
-    let ex = expr!(x - y * b; x = vars[1], y = vars[0]); // switching vars
-    assert!(ex.d1_sparsity[0] == y);
-    assert!(ex.d1_sparsity[1] == x);
+    let e = expr!(x - y * b; x = vars[1], y = vars[0]); // switching vars
+    assert!(e.d1_sparsity[0] == y);
+    assert!(e.d1_sparsity[1] == x);
 
-    let ex = expr!((x * x - y) * b + k; x, y; k);
+    let e = expr!((x * x - y) * b + k; x, y; k);
 
     let mut d1_out = vec![0.0, 0.0];
     let mut d2_out = vec![0.0];
 
-    let v = (ex.all)(
+    let v = (e.all)(
         s.vars.as_slice(),
         s.pars.as_slice(),
         &mut d1_out,
@@ -40,11 +40,11 @@ fn it_works() {
     assert!(d1_out[0] == 20.0);
     assert!(d1_out[1] == -10.0);
     assert!(d2_out[0] == 20.0);
-    assert!(ex.d1_sparsity.len() == 2);
-    assert!(ex.d1_sparsity[0] == x);
-    assert!(ex.d1_sparsity[1] == y);
-    assert!(ex.d2_sparsity.len() == 1);
-    assert!(ex.d2_sparsity[0] == (x, x));
+    assert!(e.d1_sparsity.len() == 2);
+    assert!(e.d1_sparsity[0] == x);
+    assert!(e.d1_sparsity[1] == y);
+    assert!(e.d2_sparsity.len() == 1);
+    assert!(e.d2_sparsity[0] == (x, x));
 }
 
 #[test]
@@ -52,12 +52,12 @@ fn cos() {
     let mut s = Store::new();
     let x = s.add_var(0.0);
 
-    let ex = expr!(x.cos(); x);
+    let e = expr!(x.cos(); x);
 
     let mut d1_out = vec![0.0];
     let mut d2_out = vec![0.0];
 
-    let v = (ex.all)(
+    let v = (e.all)(
         s.vars.as_slice(),
         s.pars.as_slice(),
         &mut d1_out,
@@ -73,12 +73,12 @@ fn sin() {
     let mut s = Store::new();
     let x = s.add_var(0.0);
 
-    let ex = expr!(x.sin(); x);
+    let e = expr!(x.sin(); x);
 
     let mut d1_out = vec![0.0];
     let mut d2_out = vec![0.0];
 
-    let v = (ex.all)(
+    let v = (e.all)(
         s.vars.as_slice(),
         s.pars.as_slice(),
         &mut d1_out,
@@ -88,3 +88,171 @@ fn sin() {
     assert!(d1_out[0] == 1.0);
     assert!(d2_out[0] == 0.0);
 }
+
+#[test]
+fn powi() {
+    let mut s = Store::new();
+    let x = s.add_var(5.0);
+
+    let e = expr!(x.powi(0); x);
+
+    let mut d1_out = vec![0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 1.0);
+    assert!(d1_out[0] == 0.0);
+    assert!(d2_out[0] == 0.0);
+
+    let e = expr!(x.powi(1); x);
+
+    let mut d1_out = vec![0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 5.0);
+    assert!(d1_out[0] == 1.0);
+    assert!(d2_out[0] == 0.0);
+
+    let e = expr!(x.powi(2); x);
+
+    let mut d1_out = vec![0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 25.0);
+    assert!(d1_out[0] == 10.0);
+    assert!(d2_out[0] == 2.0);
+
+    let e = expr!(x.powi(3); x);
+
+    let mut d1_out = vec![0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 125.0);
+    assert!(d1_out[0] == 75.0);
+    assert!(d2_out[0] == 30.0);
+
+    let e = expr!(x.powi(-1); x);
+
+    let mut d1_out = vec![0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 1.0 / 5.0);
+    assert!(d1_out[0] == -1.0 / 25.0);
+    assert!(d2_out[0] == 2.0 / 125.0);
+}
+
+#[test]
+fn neg() {
+    let mut s = Store::new();
+    let x = s.add_var(5.0);
+    let e = expr!(-x; x);
+
+    let mut d1_out = vec![0.0];
+    let mut d2_out = vec![];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == -5.0);
+    assert!(d1_out[0] == -1.0);
+}
+
+#[test]
+fn add() {
+    let mut s = Store::new();
+    let x = s.add_var(1.0);
+    let y = s.add_var(2.0);
+
+    let e = expr!(x + y; x, y);
+
+    let mut d1_out = vec![0.0, 0.0];
+    let mut d2_out = vec![];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 3.0);
+    assert!(d1_out[0] == 1.0);
+    assert!(d1_out[1] == 1.0);
+}
+
+#[test]
+fn mul() {
+    let mut s = Store::new();
+    let x = s.add_var(1.0);
+    let y = s.add_var(2.0);
+
+    let e = expr!(x * y; x, y);
+
+    let mut d1_out = vec![0.0, 0.0];
+    let mut d2_out = vec![0.0];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == 2.0);
+    assert!(d1_out[0] == 2.0);
+    assert!(d1_out[1] == 1.0);
+    assert!(d2_out[0] == 1.0);
+}
+
+#[test]
+fn sub() {
+    let mut s = Store::new();
+    let x = s.add_var(1.0);
+    let y = s.add_var(2.0);
+
+    let e = expr!(x - y; x, y);
+
+    let mut d1_out = vec![0.0, 0.0];
+    let mut d2_out = vec![];
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert!(v == -1.0);
+    assert!(d1_out[0] == 1.0);
+    assert!(d1_out[1] == -1.0);
+}
+

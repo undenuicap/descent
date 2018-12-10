@@ -15,6 +15,15 @@ library.
 It has only been tested on linux, but presumably would also work on macos, and
 potentially on windows in the right environment.
 
+For use in your own crate, add the following to your own `Cargo.toml` file:
+
+```toml
+[dependencies]
+descent = "0.3"
+descent_ipopt = "0.3"
+descent_macro = "0.3" # for optional expr! procedural macro use
+```
+
 ## Example
 
 The following code shows how to solve the following simple problem in IPOPT:
@@ -29,7 +38,7 @@ let mut m = IpoptModel::new();
 let x = m.add_var(-10.0, 10.0, 0.0);
 let y = m.add_var(std::f64::NEG_INFINITY, std::f64::INFINITY, 0.0);
 m.set_obj(2.0 * y);
-m.add_con(y - x * x + x, 0.0, std::INFINITY);
+m.add_con(y - x * x + x, 0.0, std::f64::INFINITY);
 
 let (stat, sol) = m.solve();
 ```
@@ -76,7 +85,7 @@ let mut m = IpoptModel::new();
 let x = m.add_var(-10.0, 10.0, 0.0);
 let y = m.add_var(std::f64::NEG_INFINITY, std::f64::INFINITY, 0.0);
 m.set_obj(expr!(2.0 * y; y));
-m.add_con(expr!(y - x * x + x; x, y), 0.0, std::INFINITY);
+m.add_con(expr!(y - x * x + x; x, y), 0.0, std::f64::INFINITY);
 
 let (stat, sol) = m.solve();
 ```

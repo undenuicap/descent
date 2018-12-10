@@ -12,15 +12,15 @@
 //! at compile-time for fixed expressions. The main type is
 //! [ExprFix](struct.ExprFix.html) but instead of hand-writing its functions,
 //! the user will typically want to auto-generate them from an expression using
-//! the [expr!](../../../descent_macro/macro.expr.html) procedural macro.
+//! the `expr!` procedural macro available in the `descent_macro` crate.
 //!
 //! Some limited run-time flexibility can be gained by using the ExprFixSum
 //! type that represents a sum of ExprFix expressions.
 //!
 //! # Examples
 //!
-//! See [expr!](../../../descent_macro/macro.expr.html) for more comprehensive
-//! examples of the macro use.
+//! See the `descent_macro` crate for more comprehensive examples of the macro
+//! use.
 //!
 //! Basic usage:
 //!

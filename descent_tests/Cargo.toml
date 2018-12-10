@@ -1,14 +1,15 @@
 [package]
 name = "descent_tests"
-version = "0.1.0"
+version = "0.3.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Descent integration tests"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
 categories = ["science"]
 license = "Apache-2.0 OR MIT"
 repository = "https://gitlab.com/pscott/descent"
+readme = "README.md"
 edition = "2018"
 
 [dev-dependencies]
-descent = { path = "../descent" }
-descent_macro = { path = "../descent_macro" }
+descent = { version = "0.3", path = "../descent" }
+descent_macro = { version = "0.3", path = "../descent_macro" }

@@ -1,16 +1,17 @@
 [package]
 name = "descent_macro"
-version = "0.1.0"
+version = "0.3.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Procedural macro for doing source-code differentiation"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
 categories = ["science"]
 license = "Apache-2.0 OR MIT"
 repository = "https://gitlab.com/pscott/descent"
+readme = "README.md"
 edition = "2018"
 
 [lib]
 proc-macro = true
 
 [dev-dependencies]
-descent = { path = "../descent" }
+descent = { version = "0.3", path = "../descent" }

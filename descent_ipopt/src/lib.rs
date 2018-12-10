@@ -8,6 +8,61 @@
 
 #![feature(test)]
 
+//! Implementation of Descent Model trait for IPOPT
+//!
+//! This contains the IPOPT bindings and implementation of `Model` in the
+//! `descent` crate.
+//!
+//! # Examples
+//!
+//! Using fixed expressions:
+//!
+//! ```
+//! #![feature(proc_macro_hygiene)]
+//! 
+//! use descent::model::Model;
+//! use descent_ipopt::IpoptModel;
+//! use descent_macro::expr;
+//! 
+//! let mut m = IpoptModel::new();
+//! 
+//! let x = m.add_var(-10.0, 10.0, 0.0);
+//! let y = m.add_var(std::f64::NEG_INFINITY, std::f64::INFINITY, 0.0);
+//! m.set_obj(expr!(2.0 * y; y));
+//! m.add_con(expr!(y - x * x + x; x, y), 0.0, std::f64::INFINITY);
+//! 
+//! let (stat, sol) = m.solve();
+//!
+//! assert!(stat == descent::model::SolutionStatus::Solved);
+//! let sol = sol.unwrap();
+//! assert!((sol.obj_val - (-0.5)).abs() < 1e-5);
+//! assert!((sol.var(x) - 0.5).abs() < 1e-5);
+//! assert!((sol.var(y) - (-0.25)).abs() < 1e-5);
+//! ```
+//!
+//! Using dynamic expressions:
+//!
+//! ```
+//! use descent::model::Model;
+//! use descent_ipopt::IpoptModel;
+//! 
+//! let mut m = IpoptModel::new();
+//! 
+//! let x = m.add_var(-10.0, 10.0, 0.0);
+//! let y = m.add_var(std::f64::NEG_INFINITY, std::f64::INFINITY, 0.0);
+//! m.set_obj(2.0 * y);
+//! m.add_con(y - x * x + x, 0.0, std::f64::INFINITY);
+//!
+//! let (stat, sol) = m.solve();
+//!
+//! assert!(stat == descent::model::SolutionStatus::Solved);
+//! let sol = sol.unwrap();
+//! assert!((sol.obj_val - (-0.5)).abs() < 1e-5);
+//! assert!((sol.var(x) - 0.5).abs() < 1e-5);
+//! assert!((sol.var(y) - (-0.25)).abs() < 1e-5);
+//! ```
+
+
 mod ipopt;
 mod sparsity;
 

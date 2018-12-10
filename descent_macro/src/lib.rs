@@ -440,6 +440,22 @@ fn extract_powi<I: Iterator<Item = TokenTree>>(iter: &mut I) -> ExprToken {
                 .parse()
                 .expect("Cannot parse powi argument as int"),
         ),
+        Some(TokenTree::Punct(punct)) => {
+            if punct.as_char() == '-' {
+                if let Some(TokenTree::Literal(lit)) = iter.next() {
+                    let val: i32 = lit.to_string()
+                                       .parse()
+                                       .expect("Cannot parse powi argument as int");
+                    ExprToken::Pow(-val)
+                } else {
+                    panic!("Expect literal interger in powi()");
+                }
+
+            } else {
+                panic!("Expect literal interger in powi()");
+            }
+
+        },
         _ => panic!("Expect literal interger in powi()"),
     };
     if let Some(_) = iter.next() {
@@ -568,7 +584,7 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
     false
 }
 
-/// Generate a [ExprFix](../ expression.
+/// Generate a `ExprFix` expression.
 ///
 /// expr!(\<expr\>; var1 [= \<expr\>], ...[; par1 [= \<expr\>], ...])
 ///
