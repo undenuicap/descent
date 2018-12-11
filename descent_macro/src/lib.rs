@@ -800,24 +800,33 @@ pub fn expr(input: TokenStream) -> TokenStream {
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     let mut structure = Vec::new();
-    // insert local lets
+    // Insert local lets
+    // Do this for all so that we can enforce the Var or Par type at compile-time 
     for (k, rhs) in v {
+        structure.extend(
+            TokenStream::from_str(&format!("let {}: descent::expr::Var = ", &k))
+                .unwrap()
+                .into_iter(),
+        );
         if let Some(t) = rhs {
-            structure.push(TokenTree::Ident(Ident::new("let", Span::call_site())));
-            structure.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
-            structure.push(TokenTree::Punct(Punct::new('=', Spacing::Alone)));
             structure.extend(t);
-            structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
+        } else {
+            structure.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
         }
+        structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
     }
     for (k, rhs) in p {
+        structure.extend(
+            TokenStream::from_str(&format!("let {}: descent::expr::Par = ", &k))
+                .unwrap()
+                .into_iter(),
+        );
         if let Some(t) = rhs {
-            structure.push(TokenTree::Ident(Ident::new("let", Span::call_site())));
-            structure.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
-            structure.push(TokenTree::Punct(Punct::new('=', Spacing::Alone)));
             structure.extend(t);
-            structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
+        } else {
+            structure.push(TokenTree::Ident(Ident::new(&k, Span::call_site())));
         }
+        structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
     }
     structure.extend(
         TokenStream::from_str("descent::expr::fixed::ExprFix")
