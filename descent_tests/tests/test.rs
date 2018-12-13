@@ -73,6 +73,7 @@ fn sin() {
 fn powi() {
     let mut s = Store::new();
     let x = s.add_var(5.0);
+    let y = s.add_var(7.0);
 
     let e = expr!(x.powi(0); x);
     assert!(e.d1_sparsity.len() == 0);
@@ -150,6 +151,25 @@ fn powi() {
     assert_near!(v, 1.0 / 5.0, 1e-8);
     assert_near!(d1_out[0], -1.0 / 25.0, 1e-8);
     assert_near!(d2_out[0], 2.0 / 125.0, 1e-8);
+
+    let e = expr!((y - x).powi(2); x, y);
+    assert!(e.d1_sparsity.len() == 2);
+    assert!(e.d2_sparsity.len() == 3);
+
+    let (mut d1_out, mut d2_out) = prepare_outputs(&e);
+
+    let v = (e.all)(
+        s.vars.as_slice(),
+        s.pars.as_slice(),
+        &mut d1_out,
+        &mut d2_out,
+    );
+    assert_near!(v, 4.0, 1e-8);
+    assert_near!(d1_out[0], -4.0, 1e-8);
+    assert_near!(d1_out[1], 4.0, 1e-8);
+    assert_near!(d2_out[0], 2.0, 1e-8); // x, x
+    assert_near!(d2_out[1], -2.0, 1e-8); // x, y
+    assert_near!(d2_out[2], 2.0, 1e-8); // y, y
 }
 
 #[test]

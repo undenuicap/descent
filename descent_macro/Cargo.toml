@@ -1,6 +1,6 @@
 [package]
 name = "descent_macro"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Procedural macro for doing source-code differentiation"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]

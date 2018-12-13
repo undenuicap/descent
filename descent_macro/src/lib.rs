@@ -532,10 +532,10 @@ fn get_expr<I: Iterator<Item = TokenTree>>(
                 '.' => {
                     // see if it is one of our allowed method calls
                     match left {
-                        Some(ExprToken::Var(_)) | Some(ExprToken::Par(_)) => {
+                        Some(ExprToken::Var(_)) | Some(ExprToken::Par(_)) | Some(ExprToken::Group(_)) => {
                             Some(get_method_call(&mut iter))
                         }
-                        _ => panic!("Expected method call on Var or Par"),
+                        _ => panic!("Expected method call on Var, Par or group"),
                     }
                 }
                 _ => Some(get_const_tokens(TokenTree::Punct(punct), &mut iter)),
