@@ -90,8 +90,12 @@ impl From<ExprFix> for ExprFixSum {
 }
 
 impl From<ExprFixSum> for Expression {
-    fn from(v: ExprFixSum) -> Self {
-        Expression::ExprFixSum(v)
+    fn from(mut v: ExprFixSum) -> Self {
+        if v.len() == 1 {
+            Expression::ExprFix(v.pop().unwrap())
+        } else {
+            Expression::ExprFixSum(v)
+        }
     }
 }
 

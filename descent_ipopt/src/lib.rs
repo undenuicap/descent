@@ -423,8 +423,25 @@ impl Model for IpoptModel {
     ///
     /// Expect a panic if parameter not in model.
     fn set_par(&mut self, par: Par, val: f64) {
-        let Par(id) = par;
-        self.model.pars[id].val = val;
+        self.model.pars[par.0].val = val;
+    }
+
+    /// Change the variable lower bound.
+    ///
+    /// # Panics
+    ///
+    /// Expect a panic if variable not in model.
+    fn set_lb(&mut self, var: Var, lb: f64) {
+        self.model.vars[var.0].lb = lb;
+    }
+
+    /// Change the variable upper bound.
+    ///
+    /// # Panics
+    ///
+    /// Expect a panic if variable not in model.
+    fn set_ub(&mut self, var: Var, ub: f64) {
+        self.model.vars[var.0].ub = ub;
     }
 
     /// Set variable initial value.
@@ -433,8 +450,7 @@ impl Model for IpoptModel {
     ///
     /// Expect a panic if variable not in model.
     fn set_init(&mut self, var: Var, init: f64) {
-        let Var(id) = var;
-        self.model.vars[id].init = init;
+        self.model.vars[var.0].init = init;
     }
 
     /// Solve the model.

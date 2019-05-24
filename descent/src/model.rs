@@ -42,6 +42,10 @@ pub trait Model {
     fn set_obj<E: Into<Expression>>(&mut self, expr: E);
     /// Change a parameter's value.
     fn set_par(&mut self, par: Par, val: f64);
+    /// Change the variable lower bound.
+    fn set_lb(&mut self, var: Var, lb: f64);
+    /// Change the variable upper bound.
+    fn set_ub(&mut self, var: Var, ub: f64);
     /// Change the initial value of a variable.
     fn set_init(&mut self, var: Var, init: f64);
     /// Solve the model.
