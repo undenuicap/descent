@@ -60,11 +60,11 @@ use super::{Expression, Var};
 /// enough to include the indices of the vars / pars for the expression.
 pub struct ExprFix {
     /// Evaluate expression.
-    pub f: Box<Fn(&[f64], &[f64]) -> f64>,
+    pub f: Box<dyn Fn(&[f64], &[f64]) -> f64>,
     /// Evaluate expression and its first and second derivatives in one go.
     ///
     /// Arguments are vars, pars, d1_out, d2_out
-    pub all: Box<Fn(&[f64], &[f64], &mut [f64], &mut [f64]) -> f64>,
+    pub all: Box<dyn Fn(&[f64], &[f64], &mut [f64], &mut [f64]) -> f64>,
     /// First derivate sparsity / order of outputs.
     pub d1_sparsity: Vec<Var>,
     /// Second derivate sparsity / order of outputs.

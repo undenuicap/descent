@@ -95,7 +95,7 @@ impl Expression {
     ///
     /// Implemtation assumes all varialbes in `ExprFix` are non-linear,
     /// because it will have minimal extra overhead doing so.
-    pub fn lin_iter<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+    pub fn lin_iter<'a>(&'a self) -> Box<dyn Iterator<Item = ID> + 'a> {
         match self {
             Expression::ExprFix(_) => Box::new(std::iter::empty()),
             Expression::ExprFixSum(_) => Box::new(std::iter::empty()),
@@ -110,7 +110,7 @@ impl Expression {
     ///
     /// Can contain variables at that are actually linear if we don't want
     /// special treatment for them.
-    pub fn nlin_iter<'a>(&'a self) -> Box<Iterator<Item = ID> + 'a> {
+    pub fn nlin_iter<'a>(&'a self) -> Box<dyn Iterator<Item = ID> + 'a> {
         match self {
             Expression::ExprFix(e) => Box::new(e.d1_sparsity.iter().map(|Var(v)| *v)),
             Expression::ExprFixSum(es) => Box::new(

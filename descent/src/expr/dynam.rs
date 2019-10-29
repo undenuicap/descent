@@ -328,7 +328,6 @@ impl Expr {
     #[cfg(test)]
     fn der1_fwd(&self, v1: ID, ns: &[f64], nds: &mut Vec<f64>) -> f64 {
         use self::Oper::*;
-        use self::Var;
         nds.resize(self.len(), 0.0);
         for (i, op) in self.ops.iter().enumerate() {
             let (left, right) = nds.split_at_mut(i);
@@ -382,7 +381,6 @@ impl Expr {
         ids: &mut HashMap<ID, f64>,
     ) -> Vec<f64> {
         use self::Oper::*;
-        use self::Var;
 
         // Probably there is a faster way than this.
         ids.clear();
@@ -482,7 +480,6 @@ impl Expr {
         ids: &mut HashMap<ID, f64>,
     ) -> Vec<f64> {
         use self::Oper::*;
-        use self::Var;
 
         // Probably there is a faster way than this.
         ids.clear();
@@ -578,7 +575,6 @@ impl Expr {
         R: Retrieve,
     {
         use self::Oper::*;
-        use self::{Par, Var};
         // Only resize up
         if cols.len() < self.len() {
             cols.resize(self.len(), Column::new());
@@ -827,7 +823,6 @@ impl Expr {
     /// Get information about the expression.
     pub fn get_info(&self) -> ExprInfo {
         use self::Oper::*;
-        use self::Var;
         let mut degs: Vec<Degree> = Vec::new();
         for (i, op) in self.ops.iter().enumerate() {
             let d = match *op {
