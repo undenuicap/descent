@@ -23,7 +23,7 @@ pub enum IpoptProblemInfo {} // type-safe way to represent opaque structs
 pub type IpoptProblem = *mut IpoptProblemInfo;
 
 #[repr(C)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 #[allow(dead_code)]
 pub enum ApplicationReturnStatus {
     SolveSucceeded = 0,

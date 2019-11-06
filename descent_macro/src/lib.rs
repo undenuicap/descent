@@ -448,15 +448,15 @@ fn extract_powi<I: Iterator<Item = TokenTree>>(iter: &mut I) -> ExprToken {
                                        .expect("Cannot parse powi argument as int");
                     ExprToken::Pow(-val)
                 } else {
-                    panic!("Expect literal interger in powi()");
+                    panic!("Expect literal integer in powi()");
                 }
 
             } else {
-                panic!("Expect literal interger in powi()");
+                panic!("Expect literal integer in powi()");
             }
 
         },
-        _ => panic!("Expect literal interger in powi()"),
+        _ => panic!("Expect literal integer in powi()"),
     };
     if let Some(_) = iter.next() {
         panic!("Only expect literal in powi()");

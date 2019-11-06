@@ -72,6 +72,7 @@ use descent::expr::{Column, Expression, Retrieve};
 use descent::expr::{Par, Var};
 use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
+use crate::ipopt::ApplicationReturnStatus;
 
 struct Variable {
     lb: f64,
@@ -133,6 +134,7 @@ pub struct IpoptModel {
     cache: Option<ModelCache>,
     prob: Option<IpoptProblem>,
     prepared: bool, // problem prepared
+    pub last_ipopt_status: Option<ApplicationReturnStatus>, // status of last solve
 }
 
 impl Default for IpoptModel {
@@ -149,6 +151,7 @@ impl Default for IpoptModel {
             cache: None,
             prob: None,
             prepared: false,
+            last_ipopt_status: None,
         }
     }
 }
@@ -316,45 +319,43 @@ impl IpoptModel {
 
     // Should only be called after prepare
     fn ipopt_solve(&mut self, mut sol: Solution) -> (SolutionStatus, Option<Solution>) {
+        self.last_ipopt_status = None;
         self.form_init_solution(&mut sol);
 
         if let (&mut Some(ref mut cache), &Some(ref prob)) = (&mut self.cache, &self.prob) {
-            let ipopt_status;
-            {
-                // Calculating constant values in ExprDyn expressions.
-                // Passing it the solution store (in theory var values should
-                // not affect the values).
-                cache.cons_const.clear();
-                for c in &self.model.cons {
-                    cache
-                        .cons_const
-                        .push(evaluate_const(&c.expr, &sol.store, &mut cache.ws));
-                }
-
-                cache.obj_const = evaluate_const(&self.model.obj.expr, &sol.store, &mut cache.ws);
-
-                let mut cb_data = IpoptCBData {
-                    model: &self.model,
-                    cache,
-                    pars: &sol.store.pars,
-                };
-
-                let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
-
-                // This and others might throw an exception. How would we catch?
-                ipopt_status = unsafe {
-                    ipopt::IpoptSolve(
-                        prob.prob,
-                        sol.store.vars.as_mut_ptr(),
-                        std::ptr::null_mut(), // can calc ourselves
-                        &mut sol.obj_val,
-                        sol.con_mult.as_mut_ptr(),
-                        sol.var_lb_mult.as_mut_ptr(),
-                        sol.var_ub_mult.as_mut_ptr(),
-                        cb_data_ptr,
-                    )
-                };
+            // Calculating constant values in ExprDyn expressions.
+            // Passing it the solution store (in theory var values should
+            // not affect the values).
+            cache.cons_const.clear();
+            for c in &self.model.cons {
+                cache
+                    .cons_const
+                    .push(evaluate_const(&c.expr, &sol.store, &mut cache.ws));
             }
+
+            cache.obj_const = evaluate_const(&self.model.obj.expr, &sol.store, &mut cache.ws);
+
+            let mut cb_data = IpoptCBData {
+                model: &self.model,
+                cache,
+                pars: &sol.store.pars,
+            };
+
+            let cb_data_ptr = &mut cb_data as *mut _ as ipopt::UserDataPtr;
+
+            // This and others might throw an exception. How would we catch?
+            let ipopt_status = unsafe {
+                ipopt::IpoptSolve(
+                    prob.prob,
+                    sol.store.vars.as_mut_ptr(),
+                    std::ptr::null_mut(), // can calc ourselves
+                    &mut sol.obj_val,
+                    sol.con_mult.as_mut_ptr(),
+                    sol.var_lb_mult.as_mut_ptr(),
+                    sol.var_ub_mult.as_mut_ptr(),
+                    cb_data_ptr,
+                )
+            };
             //println!("Counts: {:?} {:?} {:?} {:?} {:?}",
             //         cache.f_count,
             //         cache.f_grad_count,
@@ -362,20 +363,30 @@ impl IpoptModel {
             //         cache.g_jac_count,
             //         cache.l_hess_count
             //         );
-            // Should probably save ipopt_status to self
-            use crate::ipopt::ApplicationReturnStatus as ARS;
-            use descent::model::SolutionStatus as SS;
-            let status = match ipopt_status {
-                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel => SS::Solved,
-                ARS::InfeasibleProblemDetected => SS::Infeasible,
-                _ => SS::Other,
-            };
+            
+            use ApplicationReturnStatus as ARS;
+            // Saving status so can access from IpoptModel struct.
+            self.last_ipopt_status = Some(ipopt_status.clone());
             match ipopt_status {
-                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel => (status, Some(sol)),
-                _ => (status, None),
+                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel
+                    | ARS::InfeasibleProblemDetected =>
+                        (ipopt_status.into(), Some(sol)),
+                _ => (ipopt_status.into(), None),
             }
         } else {
             (SolutionStatus::Error, None)
+        }
+    }
+}
+
+impl From<ApplicationReturnStatus> for SolutionStatus {
+    fn from(ars: ApplicationReturnStatus) -> Self {
+        use ApplicationReturnStatus as ARS;
+        use SolutionStatus as SS;
+        match ars {
+            ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel => SS::Solved,
+            ARS::InfeasibleProblemDetected => SS::Infeasible,
+            _ => SS::Other,
         }
     }
 }
