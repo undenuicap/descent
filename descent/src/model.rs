@@ -67,8 +67,6 @@ pub enum SolutionStatus {
     Solved,
     /// Problem appears to be infeasible.
     Infeasible,
-    /// An error occurred during the solve process.
-    Error,
     /// Other currrently unhandled solver status returned.
     Other,
 }

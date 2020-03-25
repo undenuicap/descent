@@ -74,6 +74,15 @@ use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
 use crate::ipopt::ApplicationReturnStatus;
 
+use snafu::{Backtrace, ErrorCompat, ResultExt, Snafu};
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    UnpreparedModel,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 struct Variable {
     lb: f64,
     ub: f64,
@@ -318,7 +327,7 @@ impl IpoptModel {
     }
 
     // Should only be called after prepare
-    fn ipopt_solve(&mut self, mut sol: Solution) -> (SolutionStatus, Option<Solution>) {
+    fn ipopt_solve(&mut self, mut sol: Solution) -> Result<(SolutionStatus, Option<Solution>)> {
         self.last_ipopt_status = None;
         self.form_init_solution(&mut sol);
 
@@ -370,11 +379,11 @@ impl IpoptModel {
             match ipopt_status {
                 ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel
                     | ARS::InfeasibleProblemDetected =>
-                        (ipopt_status.into(), Some(sol)),
-                _ => (ipopt_status.into(), None),
+                        Ok((ipopt_status.into(), Some(sol))),
+                _ => Ok((ipopt_status.into(), None)),
             }
         } else {
-            (SolutionStatus::Error, None)
+            Err(Error::UnpreparedModel)
         }
     }
 }
@@ -474,7 +483,7 @@ impl Model for IpoptModel {
     fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
         let sol = Solution::new();
-        self.ipopt_solve(sol)
+        self.ipopt_solve(sol).unwrap() // Have prepared so cannot fail
     }
 
     /// Solve the model using the supplied solution as a warm start.
@@ -487,7 +496,7 @@ impl Model for IpoptModel {
     fn warm_solve(&mut self, sol: Solution) -> (SolutionStatus, Option<Solution>) {
         self.prepare();
         // Should set up warm start stuff
-        self.ipopt_solve(sol)
+        self.ipopt_solve(sol).unwrap() // Have prepared so cannot fail
     }
 }
 
