@@ -74,7 +74,7 @@ use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
 use crate::ipopt::ApplicationReturnStatus;
 
-use snafu::{Backtrace, ErrorCompat, ResultExt, Snafu};
+use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
