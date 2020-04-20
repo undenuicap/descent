@@ -46,28 +46,21 @@ fn main() {
     m.add_con(y - x * x + x, 0.0, INF);
 
     // Solve it:
-    let (stat, sol) = m.solve();
+    let (stat, sol) = m.solve().unwrap();
 
     println!("{:?}", stat);
-    if let Some(ref s) = sol {
-        println!("x: {} and y: {}", s.var(x), s.var(y));
-        println!("Objective: {}", s.obj_val);
-    }
+    println!("x: {} and y: {}", sol.var(x), sol.var(y));
+    println!("Objective: {}", sol.obj_val);
 
     // Let's solve it again after adjusting the parameter value, and warm start
     // the solver with the previous solution. We also silence the output from
     // Ipopt:
     m.set_par(p, 4.0);
     m.silence();
-    let (stat, sol) = match sol {
-        Some(s) => m.warm_solve(s),
-        None => m.solve(),
-    };
+    let (stat, sol) = m.warm_solve(sol).unwrap();
 
     println!("{:?}", stat);
-    if let Some(ref s) = sol {
-        println!("Resolve objective: {}", s.obj_val);
-    }
+    println!("Resolve objective: {}", sol.obj_val);
 
     // Build and run this example like so:
     // cargo build --release --example simple

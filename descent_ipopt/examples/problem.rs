@@ -43,7 +43,7 @@ fn main() {
     }
     println!("Solving");
     //m.silence();
-    m.solve();
+    m.solve().unwrap();
 
     // Make sure debug is on in release (set in cargo)
     //cargo build --release --example problem

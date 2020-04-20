@@ -31,10 +31,9 @@
 //! m.set_obj(expr!(2.0 * y; y));
 //! m.add_con(expr!(y - x * x + x; x, y), 0.0, std::f64::INFINITY);
 //! 
-//! let (stat, sol) = m.solve();
+//! let (stat, sol) = m.solve().unwrap();
 //!
 //! assert!(stat == descent::model::SolutionStatus::Solved);
-//! let sol = sol.unwrap();
 //! assert!((sol.obj_val - (-0.5)).abs() < 1e-5);
 //! assert!((sol.var(x) - 0.5).abs() < 1e-5);
 //! assert!((sol.var(y) - (-0.25)).abs() < 1e-5);
@@ -53,10 +52,9 @@
 //! m.set_obj(2.0 * y);
 //! m.add_con(y - x * x + x, 0.0, std::f64::INFINITY);
 //!
-//! let (stat, sol) = m.solve();
+//! let (stat, sol) = m.solve().unwrap();
 //!
 //! assert!(stat == descent::model::SolutionStatus::Solved);
-//! let sol = sol.unwrap();
 //! assert!((sol.obj_val - (-0.5)).abs() < 1e-5);
 //! assert!((sol.var(x) - 0.5).abs() < 1e-5);
 //! assert!((sol.var(y) - (-0.25)).abs() < 1e-5);
@@ -70,6 +68,7 @@ use crate::sparsity::Sparsity;
 use descent::expr::dynam::WorkSpace;
 use descent::expr::{Column, Expression, Retrieve};
 use descent::expr::{Par, Var};
+use descent::model;
 use descent::model::{Con, Model, Solution, SolutionStatus};
 use std::slice;
 use crate::ipopt::ApplicationReturnStatus;
@@ -79,6 +78,20 @@ use snafu::Snafu;
 #[derive(Debug, Snafu)]
 pub enum Error {
     UnpreparedModel,
+    /// Create function returned null pointer.
+    CreateIpopt,
+    /// Ipopt needs at least 1 variable to be constructed.
+    NoVariables,
+    /// Failed to set option.
+    SettingOption,
+    /// Ipopt problem missing.
+    MissingIpoptProblem,
+}
+
+impl From<Error> for model::Error {
+    fn from(err: Error) -> Self {
+        model::Error::Solving { source: Box::new(err) }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -170,7 +183,7 @@ impl IpoptModel {
         Self::default()
     }
 
-    fn prepare(&mut self) {
+    fn prepare(&mut self) -> Result<()> {
         // Have a problem if Expr is empty.  Don't know how to easy enforce
         // a non-empty Expr.  Could verify them, but then makes interface
         // clumbsy.  Could panic late like here.
@@ -179,9 +192,15 @@ impl IpoptModel {
         // Other option is to check as added to model (so before ExprInfo is
         // called).  Ideally should design interface/operations on ExprInfo
         // so that an empty/invalid value is not easily created/possible.
-        if self.prepared && self.cache.is_some() || self.prob.is_some() {
-            return; // If still valid don't prepare again
+        if self.prepared && self.cache.is_some() && self.prob.is_some() {
+            return Ok(()); // If still valid don't prepare again
         }
+
+        // Ipopt cannot handle being created without any variables
+        if self.model.vars.is_empty() {
+            Err(Error::NoVariables)?;
+        }
+
         let mut x_lb: Vec<f64> = Vec::new();
         let mut x_ub: Vec<f64> = Vec::new();
         for v in &self.model.vars {
@@ -225,6 +244,9 @@ impl IpoptModel {
                 l_hess,
             )
         };
+        if prob.is_null() {
+            Err(Error::CreateIpopt)?;
+        }
 
         // From code always returns true
         // For some reason getting incorrect/corrupt callback data
@@ -249,6 +271,7 @@ impl IpoptModel {
         self.prob = Some(IpoptProblem { prob });
         self.cache = Some(cache);
         self.prepared = true;
+        Ok(())
     }
 
     /// Set an IPOPT string option.
@@ -256,12 +279,13 @@ impl IpoptModel {
     /// Options can only be set once model is prepared. They will be lost if
     /// the model is modified.
     pub fn set_str_option(&mut self, key: &str, val: &str) -> bool {
-        self.prepare();
-        if let Some(ref mut prob) = self.prob {
+        if self.prepare().is_err() {
+            false
+        } else if let Some(prob) = self.prob.as_mut() {
             let key_c = std::ffi::CString::new(key).unwrap();
             let val_c = std::ffi::CString::new(val).unwrap();
             unsafe {
-                ipopt::AddIpoptStrOption(prob.prob, key_c.as_ptr(), val_c.as_ptr()) != 0 // convert to bool
+                ipopt::AddIpoptStrOption(prob.prob, key_c.as_ptr(), val_c.as_ptr()) != 0
             }
         } else {
             false
@@ -273,11 +297,12 @@ impl IpoptModel {
     /// Options can only be set once model is prepared. They will be lost if
     /// the model is modified.
     pub fn set_num_option(&mut self, key: &str, val: f64) -> bool {
-        self.prepare();
-        if let Some(ref mut prob) = self.prob {
+        if self.prepare().is_err() {
+            false
+        } else if let Some(prob) = self.prob.as_mut() {
             let key_c = std::ffi::CString::new(key).unwrap();
             unsafe {
-                ipopt::AddIpoptNumOption(prob.prob, key_c.as_ptr(), val) != 0 // convert to bool
+                ipopt::AddIpoptNumOption(prob.prob, key_c.as_ptr(), val) != 0
             }
         } else {
             false
@@ -289,11 +314,12 @@ impl IpoptModel {
     /// Options can only be set once model is prepared. They will be lost if
     /// the model is modified.
     pub fn set_int_option(&mut self, key: &str, val: i32) -> bool {
-        self.prepare();
-        if let Some(ref mut prob) = self.prob {
+        if self.prepare().is_err() {
+            false
+        } else if let Some(prob) = self.prob.as_mut() {
             let key_c = std::ffi::CString::new(key).unwrap();
             unsafe {
-                ipopt::AddIpoptIntOption(prob.prob, key_c.as_ptr(), val) != 0 // convert to bool
+                ipopt::AddIpoptIntOption(prob.prob, key_c.as_ptr(), val) != 0
             }
         } else {
             false
@@ -327,7 +353,7 @@ impl IpoptModel {
     }
 
     // Should only be called after prepare
-    fn ipopt_solve(&mut self, mut sol: Solution) -> Result<(SolutionStatus, Option<Solution>)> {
+    fn ipopt_solve(&mut self, mut sol: Solution) -> Result<(SolutionStatus, Solution)> {
         self.last_ipopt_status = None;
         self.form_init_solution(&mut sol);
 
@@ -373,15 +399,9 @@ impl IpoptModel {
             //         cache.l_hess_count
             //         );
             
-            use ApplicationReturnStatus as ARS;
             // Saving status so can access from IpoptModel struct.
             self.last_ipopt_status = Some(ipopt_status.clone());
-            match ipopt_status {
-                ARS::SolveSucceeded | ARS::SolvedToAcceptableLevel
-                    | ARS::InfeasibleProblemDetected =>
-                        Ok((ipopt_status.into(), Some(sol))),
-                _ => Ok((ipopt_status.into(), None)),
-            }
+            Ok((ipopt_status.into(), sol))
         } else {
             Err(Error::UnpreparedModel)
         }
@@ -480,10 +500,10 @@ impl Model for IpoptModel {
     /// Expression supplied to the model should only contain valid `Var` and
     /// `Par` values, i.e. those that were returned by the `add_var` / `add_par`
     /// methods by this model. Panic can occur here if not.
-    fn solve(&mut self) -> (SolutionStatus, Option<Solution>) {
-        self.prepare();
+    fn solve(&mut self) -> model::Result<(SolutionStatus, Solution)> {
+        self.prepare()?;
         let sol = Solution::new();
-        self.ipopt_solve(sol).unwrap() // Have prepared so cannot fail
+        Ok(self.ipopt_solve(sol)?) // Have prepared so cannot fail
     }
 
     /// Solve the model using the supplied solution as a warm start.
@@ -493,10 +513,10 @@ impl Model for IpoptModel {
     /// Expression supplied to the model should only contain valid `Var` and
     /// `Par` values, i.e. those that were returned by the `add_var` / `add_par`
     /// methods by this model. Panic can occur here if not.
-    fn warm_solve(&mut self, sol: Solution) -> (SolutionStatus, Option<Solution>) {
-        self.prepare();
+    fn warm_solve(&mut self, sol: Solution) -> model::Result<(SolutionStatus, Solution)> {
+        self.prepare()?;
         // Should set up warm start stuff
-        self.ipopt_solve(sol).unwrap() // Have prepared so cannot fail
+        Ok(self.ipopt_solve(sol)?) // Have prepared so cannot fail
     }
 }
 
@@ -875,13 +895,10 @@ mod tests {
         let x = m.add_var(1.0, 5.0, 0.0);
         m.set_obj(x * x);
         assert!(m.silence());
-        let (stat, sol) = m.solve();
+        let (stat, sol) = m.solve().unwrap();
         assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.var(x) - 1.0).abs() < 1e-6);
-            assert!((s.obj_val - 1.0).abs() < 1e-6);
-        }
+        assert!((sol.var(x) - 1.0).abs() < 1e-6);
+        assert!((sol.obj_val - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -891,14 +908,11 @@ mod tests {
         let y = m.add_var(-1.0, 1.0, 0.0);
         m.set_obj(x * x + y * y + x * y);
         m.silence();
-        let (stat, sol) = m.solve();
+        let (stat, sol) = m.solve().unwrap();
         assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.var(x) - 1.0).abs() < 1e-6);
-            assert!((s.var(y) + 0.5).abs() < 1e-6);
-            assert!((s.obj_val - 0.75).abs() < 1e-6);
-        }
+        assert!((sol.var(x) - 1.0).abs() < 1e-6);
+        assert!((sol.var(y) + 0.5).abs() < 1e-6);
+        assert!((sol.obj_val - 0.75).abs() < 1e-6);
     }
 
     #[test]
@@ -909,14 +923,11 @@ mod tests {
         m.set_obj(x * x + y * y + x * y);
         m.add_con(x + y, 0.75, 0.75);
         m.silence();
-        let (stat, sol) = m.solve();
+        let (stat, sol) = m.solve().unwrap();
         assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.var(x) - 1.0).abs() < 1e-6);
-            assert!((s.var(y) + 0.25).abs() < 1e-6);
-            assert!((s.obj_val - 0.8125).abs() < 1e-6);
-        }
+        assert!((sol.var(x) - 1.0).abs() < 1e-6);
+        assert!((sol.var(y) + 0.25).abs() < 1e-6);
+        assert!((sol.obj_val - 0.8125).abs() < 1e-6);
     }
 
     #[test]
@@ -927,14 +938,11 @@ mod tests {
         m.set_obj(x * x + y * y + x * y);
         m.add_con(x + y, 0.25, 0.40);
         m.silence();
-        let (stat, sol) = m.solve();
+        let (stat, sol) = m.solve().unwrap();
         assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.var(x) - 1.0).abs() < 1e-6);
-            assert!((s.var(y) + 0.6).abs() < 1e-6);
-            assert!((s.obj_val - 0.76).abs() < 1e-6);
-        }
+        assert!((sol.var(x) - 1.0).abs() < 1e-6);
+        assert!((sol.var(y) + 0.6).abs() < 1e-6);
+        assert!((sol.obj_val - 0.76).abs() < 1e-6);
     }
 
     #[test]
@@ -945,14 +953,11 @@ mod tests {
         m.set_obj(2.0 * y);
         m.add_con(y - x * x + x, 0.0, f64::INFINITY);
         m.silence();
-        let (stat, sol) = m.solve();
+        let (stat, sol) = m.solve().unwrap();
         assert_eq!(stat, SolutionStatus::Solved);
-        assert!(sol.is_some());
-        if let Some(ref s) = sol {
-            assert!((s.var(x) - 0.5).abs() < 1e-5);
-            assert!((s.var(y) + 0.25).abs() < 1e-5);
-            assert!((s.obj_val + 0.5).abs() < 1e-4);
-        }
+        assert!((sol.var(x) - 0.5).abs() < 1e-5);
+        assert!((sol.var(y) + 0.25).abs() < 1e-5);
+        assert!((sol.obj_val + 0.5).abs() < 1e-4);
     }
 
     #[test]
@@ -969,8 +974,7 @@ mod tests {
         }
         m.set_obj(obj);
         m.silence();
-        let (_, sol) = m.solve();
-        let sol = sol.expect("No solution");
+        let (_, sol) = m.solve().unwrap();
         assert!(sol.obj_val.abs() < 1e-5);
         for &x in &xs {
             assert!((sol.var(x) - 1.0).abs() < 1e-5);
@@ -997,7 +1001,7 @@ mod tests {
         }
         m.silence();
         b.iter(|| {
-            m.solve();
+            m.solve().unwrap();
         });
     }
 }

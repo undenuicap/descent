@@ -10,6 +10,15 @@
 
 use crate::expr::{Expression, Par, Retrieve, Store, Var, ID};
 
+use snafu::Snafu;
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    Solving { source: Box<dyn std::error::Error> },
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 //pub enum VarType {
 //    Continuous,
 //    Integer,
@@ -49,9 +58,9 @@ pub trait Model {
     /// Change the initial value of a variable.
     fn set_init(&mut self, var: Var, init: f64);
     /// Solve the model.
-    fn solve(&mut self) -> (SolutionStatus, Option<Solution>);
+    fn solve(&mut self) -> Result<(SolutionStatus, Solution)>;
     /// Solve the model using a previous solution as a warm start.
-    fn warm_solve(&mut self, sol: Solution) -> (SolutionStatus, Option<Solution>);
+    fn warm_solve(&mut self, sol: Solution) -> Result<(SolutionStatus, Solution)>;
 }
 
 // Not used yet
