@@ -58,6 +58,10 @@ use super::{Expression, Var};
 ///
 /// The input variable / parameter slices to these functions should be large
 /// enough to include the indices of the vars / pars for the expression.
+///
+/// The sparsity may contain the same variable indice twice. The corresponding
+/// first and second derivative values should be summed to get the overall
+/// value for that variable.
 pub struct ExprFix {
     /// Evaluate expression.
     pub f: Box<dyn Fn(&[f64], &[f64]) -> f64>,
