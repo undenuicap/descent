@@ -10,15 +10,18 @@ use descent::expr::Expression;
 use descent::expr::{Var, ID};
 use fnv::FnvHashMap;
 
+pub type JacSparsity = FnvHashMap<(usize, ID), usize>;
+pub type HesSparsity = FnvHashMap<(ID, ID), usize>;
+
 /// Sparsity of Jacobian and Hessian.
 ///
 /// The sparsity mapping is produced by adding the constraints and the
 /// objective to this structure dynamically.
 #[derive(Debug, Default)]
 pub(crate) struct Sparsity {
-    pub(crate) jac_sp: FnvHashMap<(usize, ID), usize>,
+    pub(crate) jac_sp: JacSparsity,
     pub(crate) jac_cons_inds: Vec<Vec<usize>>,
-    pub(crate) hes_sp: FnvHashMap<(ID, ID), usize>,
+    pub(crate) hes_sp: HesSparsity,
     pub(crate) hes_cons_inds: Vec<Vec<usize>>,
     pub(crate) hes_obj_inds: Vec<usize>,
 }

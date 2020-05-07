@@ -64,7 +64,7 @@
 mod ipopt;
 mod sparsity;
 
-use crate::sparsity::Sparsity;
+use crate::sparsity::{Sparsity, JacSparsity, HesSparsity};
 use descent::expr::dynam::WorkSpace;
 use descent::expr::{Column, Expression, Retrieve};
 use descent::expr::{Par, Var};
@@ -404,6 +404,16 @@ impl IpoptModel {
             Ok((ipopt_status.into(), sol))
         } else {
             Err(Error::UnpreparedModel)
+        }
+    }
+
+    pub fn sparsity(&mut self) -> Option<(JacSparsity, HesSparsity)> {
+        if self.prepare().is_err() {
+            None
+        } else if let Some(cache) = &self.cache {
+            Some((cache.sparsity.jac_sp.clone(), cache.sparsity.hes_sp.clone()))
+        } else {
+            None
         }
     }
 }
