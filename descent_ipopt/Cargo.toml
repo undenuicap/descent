@@ -1,6 +1,6 @@
 [package]
 name = "descent_ipopt"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "IPOPT interface for descent"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
@@ -14,10 +14,10 @@ edition = "2018"
 libc = "0.2"
 fnv = "1.0"
 snafu = "0.6"
-descent = { version = "0.3", path = "../descent" }
+descent = { version = "0.4", path = "../descent" }
 
 [dev-dependencies]
-descent_macro = { version = "0.3", path = "../descent_macro" }
+descent_macro = { version = "0.4", path = "../descent_macro" }
 
 [[example]]
 name = "problem"
