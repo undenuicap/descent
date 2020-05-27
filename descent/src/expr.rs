@@ -37,6 +37,33 @@ pub trait Retrieve {
     fn par(&self, p: Par) -> f64;
 }
 
+/// Extract values of constant valued items given a slice of paramter values.
+/// 
+/// This is a helper trait for procedural macro and otherwise generally should
+/// not be used.
+pub trait Extract {
+    fn extract(&self, pars: &[f64]) -> f64;
+}
+
+impl Extract for f64 {
+    fn extract(&self, _pars: &[f64]) -> f64 {
+        *self
+    }
+}
+
+//impl<T: std::ops::Deref<Target=f64>> Extract for T {
+//    fn get_noise(&self, _pars: &[f64]) -> f64 {
+//        *self.deref()
+//    }
+//}
+
+impl Extract for Par {
+    /// Expect a panic if requested id not available for whatever reason.
+    fn extract(&self, pars: &[f64]) -> f64 {
+        pars[self.0]
+    }
+}
+
 /// Storage for variable and parameter values.
 #[derive(Debug, Clone, Default)]
 pub struct Store {

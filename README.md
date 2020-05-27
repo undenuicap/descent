@@ -21,7 +21,7 @@ For use in your own crate, add the following to your own `Cargo.toml` file:
 [dependencies]
 descent = "0.3"
 descent_ipopt = "0.3"
-descent_macro = "0.3" # for optional expr! procedural macro use
+descent_macro = "0.3" # for optional but recommended expr! procedural macro use
 ```
 
 ## Example

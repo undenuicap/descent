@@ -269,14 +269,16 @@ fn scoped_declarations() {
     let y = s.add_var(5.0);
     let k = s.add_par(20.0);
 
+    let cons = vec![3.0, 12.0];
+
     let vars = vec![x, y];
-    let e = expr!(x - y * b; x = vars[1], y = vars[0]); // switching vars
+    let e = expr!(c0 * x - y * b + c1; x = vars[1], y = vars[0]; c0 = cons[0], c1 = cons[1]); // switching vars
     assert!(e.d1_sparsity.len() == 2);
     assert!(e.d2_sparsity.len() == 0);
     assert!(e.d1_sparsity[0] == y);
     assert!(e.d1_sparsity[1] == x);
 
-    let e = expr!((x * x - y) * b + k; x, y; k);
+    let e = expr!((x * x - y) * b + k + c0; x, y; c0 = cons[0]);
 
     let (mut d1_out, mut d2_out) = prepare_outputs(&e);
 
@@ -286,7 +288,7 @@ fn scoped_declarations() {
         &mut d1_out,
         &mut d2_out,
     );
-    assert_near!(v, -20.0, 1e-8);
+    assert_near!(v, -17.0, 1e-8);
     assert_near!(d1_out[0], 20.0, 1e-8);
     assert_near!(d1_out[1], -10.0, 1e-8);
     assert_near!(d2_out[0], 20.0, 1e-8);
@@ -394,7 +396,7 @@ fn parameter() {
     let y = s.add_var(3.0);
     let p = s.add_par(5.0);
 
-    let e = expr!(x + p * y; x, y; p);
+    let e = expr!(x + p * y; x, y);
     assert!(e.d1_sparsity.len() == 2);
     assert!(e.d2_sparsity.len() == 0);
 

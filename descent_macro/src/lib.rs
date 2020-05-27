@@ -62,7 +62,6 @@ fn prepare_idents<I: IntoIterator<Item = TokenTree>>(input: Vec<I>) -> IdenVec {
 #[derive(Debug)]
 enum ExprToken {
     Var(String),
-    Par(String),
     Tokens(Vec<TokenTree>), // everything must be constant beyond here
     Group(Vec<ExprToken>),
     Add,
@@ -97,7 +96,6 @@ impl ExprToken {
 #[derive(Debug, Clone)]
 enum Expr {
     Var(String),
-    Par(String),
     Const(f64),
     Tokens(Vec<TokenTree>), // everything must be constant beyond here
     Add(Box<Expr>, Box<Expr>),
@@ -137,17 +135,10 @@ impl Expr {
     fn into_tokens(self, mut tokens: &mut Vec<TokenTree>) {
         // could directly call add, sub, etc instead of operators...
         match self {
-            // doing a iden.0 to get usize from Var or Par
+            // doing a iden.0 to get usize from Var
             Expr::Var(iden) => {
                 tokens.extend(
                     TokenStream::from_str(&format!("__v[{}.0]", iden))
-                        .unwrap()
-                        .into_iter(),
-                );
-            }
-            Expr::Par(iden) => {
-                tokens.extend(
-                    TokenStream::from_str(&format!("__p[{}.0]", iden))
                         .unwrap()
                         .into_iter(),
                 );
@@ -157,6 +148,12 @@ impl Expr {
             }
             Expr::Tokens(t) => {
                 tokens.extend(t.into_iter());
+                // Calling Extend trait, on what we expect to be a Par or f64
+                tokens.extend(
+                    TokenStream::from_str(&format!(".extract(__p)"))
+                        .unwrap()
+                        .into_iter(),
+                );
             }
             Expr::Add(l, r) => {
                 let mut child = Vec::new();
@@ -314,7 +311,7 @@ fn deriv1(expr: &Expr, vid: &str) -> Box<Expr> {
                 Expr::Const(0.0)
             }
         }
-        Expr::Par(_) | Expr::Const(_) | Expr::Tokens(_) => Expr::Const(0.0),
+        Expr::Const(_) | Expr::Tokens(_) => Expr::Const(0.0),
         Expr::Add(l, r) => Expr::Add(deriv1(l, vid), deriv1(r, vid)),
         Expr::Sub(l, r) => Expr::Sub(deriv1(l, vid), deriv1(r, vid)),
         Expr::Neg(v) => Expr::Neg(deriv1(v, vid)),
@@ -358,7 +355,6 @@ fn tokens_to_expr<I: Iterator<Item = ExprToken>>(
         let token = iter.next().unwrap(); // already checked it exists
         expr = Some(match token {
             ExprToken::Var(i) => Expr::Var(i),
-            ExprToken::Par(i) => Expr::Par(i),
             ExprToken::Tokens(t) => Expr::Tokens(t),
             ExprToken::Group(stream) => tokens_to_expr(&mut stream.into_iter().peekable(), None),
             op @ ExprToken::Add => {
@@ -497,15 +493,12 @@ fn get_expr<I: Iterator<Item = TokenTree>>(
     left: Option<&ExprToken>,
     mut iter: &mut Peekable<I>,
     vars: &HashSet<String>,
-    pars: &HashSet<String>,
 ) -> Option<ExprToken> {
     match iter.next() {
         Some(TokenTree::Ident(ident)) => {
             let id = ident.to_string();
             if vars.contains(id.as_str()) {
                 Some(ExprToken::Var(id))
-            } else if pars.contains(id.as_str()) {
-                Some(ExprToken::Par(id))
             } else {
                 Some(get_const_tokens(TokenTree::Ident(ident), &mut iter))
             }
@@ -532,10 +525,10 @@ fn get_expr<I: Iterator<Item = TokenTree>>(
                 '.' => {
                     // see if it is one of our allowed method calls
                     match left {
-                        Some(ExprToken::Var(_)) | Some(ExprToken::Par(_)) | Some(ExprToken::Group(_)) => {
+                        Some(ExprToken::Var(_)) | Some(ExprToken::Group(_)) => {
                             Some(get_method_call(&mut iter))
                         }
-                        _ => panic!("Expected method call on Var, Par or group"),
+                        _ => panic!("Expected method call on Var or group"),
                     }
                 }
                 _ => Some(get_const_tokens(TokenTree::Punct(punct), &mut iter)),
@@ -546,7 +539,6 @@ fn get_expr<I: Iterator<Item = TokenTree>>(
                 Some(ExprToken::Group(to_expr_stream(
                     &mut group.stream().into_iter().peekable(),
                     vars,
-                    pars,
                 )))
             } else {
                 panic!("Can only work with grouping with parenthesis");
@@ -560,10 +552,9 @@ fn get_expr<I: Iterator<Item = TokenTree>>(
 fn to_expr_stream<I: Iterator<Item = TokenTree>>(
     mut iter: &mut Peekable<I>,
     vars: &HashSet<String>,
-    pars: &HashSet<String>,
 ) -> Vec<ExprToken> {
     let mut expr_stream = Vec::new();
-    while let Some(expr) = get_expr(expr_stream.last(), &mut iter, vars, pars) {
+    while let Some(expr) = get_expr(expr_stream.last(), &mut iter, vars) {
         expr_stream.push(expr);
     }
     expr_stream
@@ -586,25 +577,24 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 
 /// Generate a `ExprFix` expression.
 ///
-/// expr!(\<expr\>; var1 [= \<expr\>], ...[; par1 [= \<expr\>], ...])
+/// expr!(\<expr\>; var1 [= \<expr\>], ...[; iden1 [= \<expr\>], ...])
 ///
 /// The macro body consists of 3 semicolon separated parts:
 ///
 /// 1. A representation of the expression that you want to produce.
-/// 2. A comma separated list of variable names used in the expression body.
-/// 3. An optional comma separated list of parameter names used in the
-///    expression body.
+/// 2. A comma separated list of Var names used in the expression body.
+/// 3. An optional comma separated list of names for Par or f64 values.
 ///
-/// The variable and parameter names must be simple identifiers. The
+/// The names used to represent variables must be simple identifiers. The
 /// identifiers must either be present in the environment as legitimate `Var`
-/// or `Par` values that can be copied into the expression, or the special
-/// syntax `name = expression` can be used in the list of variable or parameter
-/// names (parts 2 and 3) to automatically declare them in a local scope.
+/// values that can be copied into the expression, or the special syntax `name
+/// = expression` can be used in the list of variable or parameter names (parts
+/// 2 and 3) to conveniently declare them in a local scope.
 ///
-/// Constants and other expressions used in the expression are captured (moved)
-/// from the environment, similarly to a closure. There are in fact multiple
-/// closures being created behind the scenes, so anything that is captured
-/// needs to implement copy.
+/// Anything that appears in the expression is captured (moved) from the
+/// environment (or local scope), similarly to a closure. There are in fact
+/// multiple closures being created behind the scenes, so anything that is
+/// captured needs to implement copy.
 ///
 /// # Examples
 ///
@@ -616,7 +606,7 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 /// let y = Var(1);
 /// let p = Par(0);
 /// let c = 1.0;
-/// let e = expr!(p * x + y * y + c; x, y; p);
+/// let e = expr!(p * x + y * y + c; x, y);
 /// ```
 ///
 /// Syntax for scoped declaration of variables / parameters:
@@ -628,12 +618,23 @@ fn contains_ident(iter: TokenStream, names: &HashSet<&str>) -> bool {
 /// let vars = [Var(0), Var(1)];
 /// let pars = [Par(0)];
 /// let constant = vec![1.0, 2.0];
-/// let c = constant[0];
-/// let e = expr!(a * x + y * y + c; x = vars[0], y = vars[1]; a = pars[0]);
+/// let e = expr!(a * x + y * y + c; x = vars[0], y = vars[1]; a = pars[0], c = constant[0]);
 /// ```
-/// This convenience currently hasn't been extended to constant terms. So in
-/// the above we need to explicitly declare `c` in the environment so that the
-/// closures don't try to move the whole `constant` vector multiple times.
+///
+/// This is a shorthand for the following, which is required to make sure the
+/// values can be copied into the internal closures (e.g., directly using
+/// `constant[0]` would attempt result in attempting to move the Vec `constant`
+/// multiple times):
+///
+/// ```ignore
+/// let e = {
+///     let x = vars[0];
+///     let y = vars[1];
+///     let a = pars[0];
+///     let c = constant[0];
+///     expr!(a * x + y * y + c; x, y;)
+/// }
+/// ```
 #[proc_macro]
 pub fn expr(input: TokenStream) -> TokenStream {
     let invalid_ident = ["__v", "__p", "__d1", "__d2"].iter().cloned().collect();
@@ -646,35 +647,35 @@ pub fn expr(input: TokenStream) -> TokenStream {
         panic!("Expected variables to be specified");
     }
 
-    let p = if split.len() == 3 {
+    let o = if split.len() == 3 {
         prepare_idents(separate_on_punct(split.pop().unwrap(), ','))
     } else {
         IdenVec::new()
     };
     let v = prepare_idents(separate_on_punct(split.pop().unwrap(), ','));
     let mut v_set = HashSet::new();
-    let mut p_set = HashSet::new();
+    let mut o_set = HashSet::new();
     for (k, _) in &v {
         if v_set.contains(k) {
             panic!("Variable identifier cannot be used twice");
         }
         v_set.insert(k.clone());
     }
-    for (k, _) in &p {
-        if p_set.contains(k) {
-            panic!("Parameter identifier cannot be used twice");
+    for (k, _) in &o {
+        if o_set.contains(k) {
+            panic!("constant / parameter Identifier cannot be used twice");
         }
-        p_set.insert(k.clone());
+        o_set.insert(k.clone());
     }
-    for k in &p_set {
+    for k in &o_set {
         if v_set.contains(k) {
-            panic!("Cannot use same identifier for parameter and variable");
+            panic!("Cannot use same identifier as variable and parameter / constant");
         }
     }
 
     let e = split.pop().unwrap();
 
-    let e_stream = to_expr_stream(&mut e.into_iter().peekable(), &v_set, &p_set);
+    let e_stream = to_expr_stream(&mut e.into_iter().peekable(), &v_set);
     let expr = tokens_to_expr(&mut e_stream.into_iter().peekable(), None);
 
     // all combined body
@@ -800,8 +801,13 @@ pub fn expr(input: TokenStream) -> TokenStream {
     body.push(TokenTree::Punct(Punct::new(',', Spacing::Alone)));
 
     let mut structure = Vec::new();
+    // Bring trait into scope so can treat Par and f64 the same.
+    structure.extend(
+        TokenStream::from_str("use descent::expr::Extract;")
+        .unwrap().into_iter()
+    );
     // Insert local lets
-    // Do this for all so that we can enforce the Var or Par type at compile-time 
+    // Do this for all so that we can enforce the Var at compile-time 
     for (k, rhs) in v {
         structure.extend(
             TokenStream::from_str(&format!("let {}: descent::expr::Var = ", &k))
@@ -815,9 +821,9 @@ pub fn expr(input: TokenStream) -> TokenStream {
         }
         structure.push(TokenTree::Punct(Punct::new(';', Spacing::Alone)));
     }
-    for (k, rhs) in p {
+    for (k, rhs) in o {
         structure.extend(
-            TokenStream::from_str(&format!("let {}: descent::expr::Par = ", &k))
+            TokenStream::from_str(&format!("let {} = ", &k))
                 .unwrap()
                 .into_iter(),
         );
