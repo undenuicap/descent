@@ -150,6 +150,11 @@ impl Drop for IpoptProblem {
     }
 }
 
+// While we can't copy or clone them, it should be safe to pass them between
+// threads, assuming ipopt isn't sharing anything mutable between problems.
+unsafe impl Send for IpoptProblem {}
+unsafe impl Sync for IpoptProblem {}
+
 /// IPOPT model / solver.
 pub struct IpoptModel {
     model: ModelData,
