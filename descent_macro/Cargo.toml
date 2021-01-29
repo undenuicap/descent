@@ -1,6 +1,6 @@
 [package]
 name = "descent_macro"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Procedural macro for doing source-code differentiation"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
@@ -14,4 +14,4 @@ edition = "2018"
 proc-macro = true
 
 [dev-dependencies]
-descent = { version = "0.4", path = "../descent" }
+descent = { version = "0.5", path = "../descent" }

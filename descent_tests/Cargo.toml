@@ -1,6 +1,6 @@
 [package]
 name = "descent_tests"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Descent integration tests"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
@@ -11,5 +11,5 @@ readme = "README.md"
 edition = "2018"
 
 [dev-dependencies]
-descent = { version = "0.4", path = "../descent" }
-descent_macro = { version = "0.4", path = "../descent_macro" }
+descent = { version = "0.5", path = "../descent" }
+descent_macro = { version = "0.5", path = "../descent_macro" }

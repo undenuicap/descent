@@ -1,6 +1,6 @@
 [package]
 name = "descent"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Paul Scott <paul.m.sco@gmail.com>"]
 description = "Modelling and automatic differentiation for constrained optimisation"
 keywords = ["optimisation", "optimization", "constraint", "differentiation", "ipopt"]
