@@ -61,6 +61,12 @@ pub trait Model {
     fn solve(&mut self) -> Result<(SolutionStatus, Solution)>;
     /// Solve the model using a previous solution as a warm start.
     fn warm_solve(&mut self, sol: Solution) -> Result<(SolutionStatus, Solution)>;
+    /// Number of variables.
+    fn n_vars(&self) -> usize;
+    /// Number of parameters.
+    fn n_pars(&self) -> usize;
+    /// Number of constraints.
+    fn n_cons(&self) -> usize;
 }
 
 // Not used yet

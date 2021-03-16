@@ -533,6 +533,18 @@ impl Model for IpoptModel {
         // Should set up warm start stuff
         Ok(self.ipopt_solve(sol)?) // Have prepared so cannot fail
     }
+
+    fn n_vars(&self) -> usize {
+        self.model.vars.len()
+    }
+
+    fn n_pars(&self) -> usize {
+        self.model.pars.len()
+    }
+
+    fn n_cons(&self) -> usize {
+        self.model.cons.len()
+    }
 }
 
 struct Store<'a> {
