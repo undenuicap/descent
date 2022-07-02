@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(proc_macro_hygiene)]
 
 extern crate proc_macro;
 use crate::proc_macro::*;
